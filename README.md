@@ -4,7 +4,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 
 > **Status:** ✅ Stable release with Transformers.js running locally in Zotero 8
 
-![ZotSeek Search Dialog](docs/images/search-dialog.png)
+![ZotSeek Search Dialog](docs/images/search-dialog-by-section.png)
 
 ---
 
@@ -17,7 +17,29 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - 🔗 **Hybrid Search** - Combines AI + keyword search for best results
 - ⚡ **Lightning Fast** - Searches complete in <100ms
 - 📑 **Section-Aware** - See which section matched (Abstract, Methods, Results)
+- 📍 **Passage-Level Location** - Jump to exact page & paragraph in Full Document mode
 - ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek
+
+---
+
+## Privacy & Security
+
+ZotSeek is designed with privacy as a core principle:
+
+| Aspect | Guarantee |
+|--------|-----------|
+| **AI Model** | Bundled with the plugin (131MB) — no downloads, no API calls |
+| **Processing** | All AI inference runs locally on your CPU/GPU |
+| **Your Papers** | Only indexes items from your local Zotero library |
+| **Network** | Zero network requests for search or indexing |
+| **Storage** | Embeddings saved locally in `zotseek.sqlite` in your Zotero data folder |
+| **Offline** | Works completely offline after installation |
+
+**What this means:**
+- Your research never leaves your machine
+- No cloud services, no API keys, no subscriptions
+- No telemetry or usage tracking
+- Uninstalling the plugin removes all ZotSeek data
 
 ---
 
@@ -71,11 +93,13 @@ When you use "Index Current Collection" or "Update Library Index":
 
 ```
 For each paper:
-  1. Extract title + abstract (or full PDF text)
-  2. Split into semantic chunks if needed
+  1. Extract title + abstract (Abstract mode)
+     — OR —
+     Extract PDF text page-by-page with exact page numbers (Full Document mode)
+  2. Split into paragraphs, filter out References/Bibliography
   3. Send to local AI model (nomic-embed-text-v1.5)
   4. Model outputs 768 numbers per chunk (the "embedding")
-  5. Save embeddings to Zotero's database
+  5. Save embeddings + location metadata to local database (zotseek.sqlite)
 ```
 
 **Time:** ~3 seconds per chunk
@@ -134,6 +158,25 @@ The **Source** column shows which section of the paper matched your query:
 | Results | Results, Discussion, Conclusions |
 | Content | Generic (sections not detected) |
 
+### Result Granularity (Full Document Mode)
+
+When using **Full Document** indexing mode, you can toggle between two result views:
+
+| Mode | Results | Best For |
+|------|---------|----------|
+| **By Section** (default) | 1 result per paper, best matching section | Overview of matching papers |
+| **By Location** | All matching paragraphs with exact page & paragraph | Finding specific passages |
+
+**By Section** - Aggregates all chunks per paper, shows the highest-scoring match:
+
+![By Section Mode](docs/images/search-dialog-by-section.png)
+
+**By Location** - Returns every matching paragraph individually with its own score:
+
+![By Location Mode](docs/images/search-dialog-by-location.png)
+
+In **By Location** mode, clicking a result opens the PDF to the exact page where the match was found.
+
 For technical details, see [docs/SEARCH_ARCHITECTURE.md](docs/SEARCH_ARCHITECTURE.md).
 
 ---
@@ -150,11 +193,21 @@ Configure via **Zotero → Settings → ZotSeek**.
 ### How Full Document Mode Works
 
 For papers with PDFs, the chunker:
-1. Splits at section headers (Introduction, Methods, Results, etc.)
-2. Splits large sections by paragraphs
+1. Extracts text page-by-page with exact page numbers
+2. Splits each page into paragraphs
 3. Prepends title to each chunk for context
+4. **Automatically filters out References/Bibliography sections**
 
-When searching, if *any* chunk matches your query, the paper ranks highly (MaxSim aggregation).
+When searching, if *any* chunk matches your query, the paper ranks highly (MaxSim aggregation in "By Section" mode).
+
+### References Filtering
+
+The chunker automatically detects and excludes bibliography sections:
+- Detects headers: "References", "Bibliography", "Works Cited", "Literature Cited"
+- Recognizes citation patterns: `[1]`, `Smith, J. (2021).`, DOI links
+- Stops indexing once references section is detected
+
+This keeps your search results focused on the actual content of papers.
 
 ---
 

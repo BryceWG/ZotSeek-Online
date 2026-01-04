@@ -8,13 +8,15 @@
 
 import { Logger } from '../utils/logger';
 import { ZoteroAPI, ZoteroItem } from '../utils/zotero-api';
-import { 
-  Chunk, 
-  ChunkOptions, 
-  IndexingMode, 
-  chunkDocument, 
-  getChunkOptionsFromPrefs, 
-  getIndexingMode 
+import {
+  Chunk,
+  ChunkOptions,
+  IndexingMode,
+  chunkDocument,
+  chunkDocumentWithPages,
+  PageText,
+  getChunkOptionsFromPrefs,
+  getIndexingMode
 } from '../utils/chunker';
 import { TextSourceType } from './vector-store-sqlite';
 
@@ -94,34 +96,70 @@ export class TextExtractor {
 
   /**
    * Extract chunks from a single item based on indexing mode
+   * Uses page-by-page extraction for accurate page numbers in 'full' mode
    */
   async extractChunksFromItem(
-    item: ZoteroItem, 
+    item: ZoteroItem,
     mode?: IndexingMode,
     options?: ChunkOptions
   ): Promise<ExtractedChunks | null> {
     try {
       const title = item.getField('title') || 'Untitled';
       const abstract = item.getField('abstractNote') || null;
-      
+
       // Get indexing mode from preference if not specified
       const indexingMode = mode ?? getIndexingMode(Zotero);
       const chunkOptions = options ?? getChunkOptionsFromPrefs(Zotero);
-      
-      // Get fulltext for 'full' mode
-      let fulltext: string | null = null;
+
+      let chunks: Chunk[];
+
       if (indexingMode === 'full') {
-        fulltext = await this.zoteroAPI.getFullText(item.id);
+        // Use page-by-page extraction for accurate page numbers
+        const pages = await this.zoteroAPI.getFullTextByPage(item.id);
+
+        if (pages && pages.length > 0) {
+          // Use new page-aware chunker for accurate page numbers
+          this.logger.debug(`Using page-by-page chunking for item ${item.id} (${pages.length} pages)`);
+          try {
+            chunks = chunkDocumentWithPages(title, abstract, pages, indexingMode, chunkOptions);
+          } catch (chunkError: any) {
+            console.error(`[TextExtractor] chunkDocumentWithPages failed for item ${item.id}:`,
+              chunkError?.message || chunkError?.toString() || chunkError);
+            console.error(`[TextExtractor] Stack:`, chunkError?.stack);
+            throw chunkError;
+          }
+        } else {
+          // Fallback to legacy chunker if page extraction fails
+          this.logger.debug(`Falling back to legacy chunking for item ${item.id}`);
+          const fulltext = await this.zoteroAPI.getFullText(item.id);
+          const totalPages = await this.zoteroAPI.getPageCount(item.id);
+          if (totalPages) {
+            chunkOptions.totalPages = totalPages;
+          }
+          chunks = chunkDocument(title, abstract, fulltext, indexingMode, chunkOptions);
+        }
+      } else {
+        // Abstract mode - no fulltext needed
+        chunks = chunkDocument(title, abstract, null, indexingMode, chunkOptions);
       }
-      
-      // Generate chunks based on mode
-      const chunks = chunkDocument(title, abstract, fulltext, indexingMode, chunkOptions);
-      
+
       if (chunks.length === 0) {
         this.logger.warn(`No chunks generated for item ${item.id}: ${title}`);
         return null;
       }
-      
+
+      // Log chunk distribution by page for debugging
+      const pageDistribution = new Map<number, number>();
+      for (const chunk of chunks) {
+        const page = chunk.pageNumber || 0;
+        pageDistribution.set(page, (pageDistribution.get(page) || 0) + 1);
+      }
+      const pageInfo = [...pageDistribution.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([page, count]) => `p${page}:${count}`)
+        .join(' ');
+      this.logger.debug(`Item ${item.id}: ${chunks.length} chunks across pages [${pageInfo}]`);
+
       // Generate content hash from all chunk texts
       const allText = chunks.map(c => c.text).join('\n\n');
       const contentHash = this.hashContent(allText);
@@ -135,8 +173,14 @@ export class TextExtractor {
         chunks,
         contentHash,
       };
-    } catch (error) {
-      this.logger.error(`Failed to extract chunks from item ${item.id}:`, error);
+    } catch (error: any) {
+      // Better error logging - Error objects don't serialize well
+      const errorMessage = error?.message || error?.toString() || 'Unknown error';
+      const errorStack = error?.stack || '';
+      this.logger.error(`Failed to extract chunks from item ${item.id}: ${errorMessage}`);
+      if (errorStack) {
+        console.error(`[TextExtractor] Stack trace for item ${item.id}:`, errorStack);
+      }
       return null;
     }
   }

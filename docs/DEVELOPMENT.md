@@ -23,10 +23,11 @@ A guide for building Zotero 7/8 plugins with TypeScript, featuring lessons learn
 7. [Testing in Zotero](#testing-in-zotero)
 8. [Development Workflow](#development-workflow)
 9. [Common Patterns](#common-patterns)
-10. [Troubleshooting](#troubleshooting)
-11. [Lessons Learned](#lessons-learned)
-12. [Resources](#resources)
-13. [Hybrid Search Implementation](#hybrid-search-implementation)
+10. [Debugging & Console Output](#debugging--console-output)
+11. [Troubleshooting](#troubleshooting)
+12. [Lessons Learned](#lessons-learned)
+13. [Resources](#resources)
+14. [Hybrid Search Implementation](#hybrid-search-implementation)
 
 ---
 
@@ -823,21 +824,43 @@ Install in Zotero: Tools → Add-ons → Install Add-on From File
 
 1. **Make changes** to TypeScript files in `src/`
 
-2. **Build** the plugin:
+2. **Build and restart** the plugin:
    ```bash
-   npm run build
+   npm run build && osascript -e 'quit app "Zotero"' 2>/dev/null; sleep 2 && open -a Zotero --args -purgecaches -jsconsole
    ```
 
-3. **Restart Zotero** with cache purge:
-   ```bash
-   open -a Zotero --args -purgecaches -jsconsole
-   ```
+3. **Check console** for errors (Help → Debug Output Logging → View Output)
 
-4. **Check console** for errors (Help → Debug Output Logging → View Output)
+4. **Test** your changes
 
-5. **Test** your changes
+5. **Repeat**
 
-6. **Repeat**
+### Quick Reload Script (Recommended)
+
+Create a one-liner alias or script for faster iteration:
+
+```bash
+# Add to ~/.zshrc or ~/.bashrc
+alias zotdev='npm run build && osascript -e "quit app \"Zotero\"" 2>/dev/null; sleep 2 && open -a Zotero --args -purgecaches -jsconsole'
+```
+
+Or create a `dev-reload.sh` script in your project:
+
+```bash
+#!/bin/bash
+# dev-reload.sh - Build and restart Zotero for development
+
+echo "=== Building plugin ==="
+npm run build
+
+echo ""
+echo "=== Restarting Zotero ==="
+osascript -e 'quit app "Zotero"' 2>/dev/null
+sleep 2
+open -a Zotero --args -purgecaches -jsconsole
+```
+
+> ⚠️ **Why `open -a Zotero` alone doesn't work:** If Zotero is already running, `open -a Zotero` just brings the existing window to focus without restarting. You must **quit Zotero first** using `osascript -e 'quit app "Zotero"'` to force a fresh restart that loads your updated plugin.
 
 ### Watch Mode (Faster Iteration)
 
@@ -845,7 +868,7 @@ Install in Zotero: Tools → Add-ons → Install Add-on From File
 npm run watch  # Rebuilds on file changes
 ```
 
-Then just restart Zotero to pick up changes.
+Then use the reload script to restart Zotero and pick up changes.
 
 ### Debugging Tips
 
@@ -2125,6 +2148,124 @@ await Zotero.DB.queryAsync(
 - **Atomic updates** - No need to rewrite entire files
 - **Lower memory** - Load on demand, not all at once
 - **Built-in** - No external dependencies
+
+---
+
+## Debugging & Console Output
+
+Debugging Zotero plugins can be tricky because `console.log` is **not available** in the bootstrap context. Here's how to properly debug your plugin.
+
+### Opening the Browser Console
+
+The Browser Console shows all JavaScript output and errors:
+
+1. **Menu:** Tools → Browser Console
+2. **Keyboard:** `Cmd+Shift+J` (Mac) / `Ctrl+Shift+J` (Windows/Linux)
+3. **Command line:** Start Zotero with the console open:
+   ```bash
+   open -a Zotero --args -jsconsole
+   ```
+
+### Logging Methods
+
+#### ❌ Don't Use `console.log`
+```javascript
+// This will throw "console is not defined" in bootstrap.js
+console.log("Hello");  // ERROR!
+```
+
+#### ✅ Use `Zotero.debug()` for Debug Log
+```javascript
+// Outputs to Zotero's debug log (Help → Debug Output Logging)
+Zotero.debug("[MyPlugin] Hello from debug log");
+```
+Note: This goes to the **debug log file**, not the Browser Console.
+
+#### ✅ Use Main Window Console for Browser Console
+```javascript
+// Outputs to Browser Console (visible immediately)
+function logToConsole(message) {
+  const win = Zotero.getMainWindow?.();
+  if (win?.console) {
+    win.console.log(message);
+  }
+}
+
+logToConsole("[MyPlugin] Hello from Browser Console");
+```
+
+### Recommended Logging Pattern
+
+Create a logger utility that outputs to both:
+
+```javascript
+// src/utils/logger.ts
+function getConsole() {
+  try {
+    const win = Zotero?.getMainWindow?.();
+    return win?.console || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export function log(level, ...args) {
+  const prefix = "[MyPlugin]";
+  const message = `${prefix} [${level.toUpperCase()}] ${args.join(" ")}`;
+
+  // Browser Console (visible in Tools → Browser Console)
+  const console = getConsole();
+  if (console) {
+    switch (level) {
+      case "error": console.error(message); break;
+      case "warn": console.warn(message); break;
+      default: console.log(message);
+    }
+  }
+
+  // Also log to Zotero's debug output
+  Zotero?.debug?.(message);
+}
+
+export const logger = {
+  debug: (...args) => log("debug", ...args),
+  info: (...args) => log("info", ...args),
+  warn: (...args) => log("warn", ...args),
+  error: (...args) => log("error", ...args),
+};
+```
+
+### Development vs Production Builds
+
+With `zotero-plugin` CLI, use `--dev` flag for development builds:
+
+```bash
+# Development build (enables debugging features)
+npx zotero-plugin build --dev
+
+# Production build (minified, no debug)
+npx zotero-plugin build
+```
+
+### Debug Output Logging
+
+For detailed debugging, enable Zotero's debug output:
+
+1. Go to **Help → Debug Output Logging → Enable**
+2. Reproduce the issue
+3. Go to **Help → Debug Output Logging → View Output**
+4. Or save to file: **Help → Debug Output Logging → Save to File**
+
+### Quick Debug Tips
+
+| What | How |
+|------|-----|
+| See errors immediately | Open Browser Console before testing |
+| Log from bootstrap.js | Use `Zotero.debug()` only |
+| Log from plugin code | Use `Zotero.getMainWindow().console` |
+| Start with console open | `open -a Zotero --args -jsconsole` |
+| Clear extension cache | Delete `extensions.lastApp*` from `prefs.js` |
+| Force reload | `open -a Zotero --args -purgecaches` |
 
 ---
 

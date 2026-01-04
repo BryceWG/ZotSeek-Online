@@ -185,6 +185,60 @@ export class ZoteroAPI {
   }
 
   /**
+   * Get full text content page by page using PDFWorker
+   * Returns array of {pageNumber, text} for each page
+   */
+  async getFullTextByPage(itemId: number): Promise<Array<{ pageNumber: number; text: string }> | null> {
+    try {
+      const item = this.getItem(itemId);
+      if (!item || !item.isRegularItem()) return null;
+
+      const attachmentIDs = item.getAttachments();
+
+      for (const id of attachmentIDs) {
+        const attachment = Zotero.Items.get(id);
+        if (!attachment || !attachment.isPDFAttachment()) continue;
+
+        // Get total pages first
+        const pageInfo = await Zotero.Fulltext.getPages(id);
+        if (!pageInfo || pageInfo.total <= 0) continue;
+
+        const totalPages = pageInfo.total;
+        const pages: Array<{ pageNumber: number; text: string }> = [];
+
+        debug(`Extracting ${totalPages} pages for item ${itemId}`);
+
+        // Extract text page by page
+        // Note: PDFWorker uses \n for paragraph breaks and \f for page breaks
+        for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+          try {
+            const pageResult = await Zotero.PDFWorker.getFullText(id, [pageIndex], false, null);
+            if (pageResult && pageResult.text) {
+              pages.push({
+                pageNumber: pageIndex + 1,  // 1-based page number
+                text: pageResult.text
+              });
+            }
+          } catch (pageError) {
+            debug(`Error extracting page ${pageIndex + 1}: ${pageError}`);
+            // Continue with other pages
+          }
+        }
+
+        if (pages.length > 0) {
+          debug(`Extracted ${pages.length} pages for item ${itemId}`);
+          return pages;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      debug(`Failed to get page-by-page text for item ${itemId}: ${error}`);
+      return null;
+    }
+  }
+
+  /**
    * Extract text from item (title + abstract, with fulltext fallback)
    */
   async extractText(item: ZoteroItem): Promise<{ text: string; source: TextSourceType }> {
@@ -266,6 +320,98 @@ export class ZoteroAPI {
   }
 
   /**
+   * Get total page count for an item's PDF attachment
+   * Uses Zotero.Fulltext.getPages() for accurate page counts
+   */
+  async getPageCount(itemId: number): Promise<number | null> {
+    try {
+      const item = this.getItem(itemId);
+      if (!item || !item.isRegularItem()) return null;
+
+      const attachmentIDs = item.getAttachments();
+      for (const id of attachmentIDs) {
+        const attachment = Zotero.Items.get(id);
+        if (attachment && attachment.isPDFAttachment()) {
+          // Use Zotero's Fulltext API to get page count
+          const pages = await Zotero.Fulltext.getPages(id);
+          if (pages && pages.total > 0) {
+            debug(`Item ${itemId}: ${pages.total} pages (${pages.indexedPages} indexed)`);
+            return pages.total;
+          }
+        }
+      }
+      return null;
+    } catch (error) {
+      debug(`Failed to get page count for item ${itemId}: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Find exact page number for a text snippet using PDFWorker
+   * Searches each page until the snippet is found
+   *
+   * @param itemId - The parent item ID
+   * @param snippet - Text snippet to search for (first ~100 chars of chunk)
+   * @returns The 1-based page number, or null if not found
+   */
+  async findExactPage(itemId: number, snippet: string): Promise<number | null> {
+    try {
+      const item = this.getItem(itemId);
+      if (!item || !item.isRegularItem()) return null;
+
+      const attachmentIDs = item.getAttachments();
+      for (const id of attachmentIDs) {
+        const attachment = Zotero.Items.get(id);
+        if (!attachment || !attachment.isPDFAttachment()) continue;
+
+        // Get total pages first
+        const pageInfo = await Zotero.Fulltext.getPages(id);
+        if (!pageInfo || pageInfo.total <= 0) continue;
+
+        const totalPages = pageInfo.total;
+
+        // Normalize snippet for matching (remove extra whitespace, lowercase)
+        const normalizedSnippet = snippet
+          .toLowerCase()
+          .replace(/\s+/g, ' ')
+          .trim()
+          .substring(0, 100); // Use first 100 chars for matching
+
+        debug(`Searching for snippet in ${totalPages} pages: "${normalizedSnippet.substring(0, 50)}..."`);
+
+        // Search each page using PDFWorker with specific page indices
+        for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+          try {
+            // Get text for this specific page (0-indexed array)
+            const pageResult = await Zotero.PDFWorker.getFullText(id, [pageIndex], false, null);
+
+            if (pageResult && pageResult.text) {
+              const normalizedPageText = pageResult.text
+                .toLowerCase()
+                .replace(/\s+/g, ' ');
+
+              if (normalizedPageText.includes(normalizedSnippet)) {
+                debug(`Found snippet on page ${pageIndex + 1}`);
+                return pageIndex + 1; // Return 1-based page number
+              }
+            }
+          } catch (pageError) {
+            debug(`Error extracting page ${pageIndex}: ${pageError}`);
+          }
+        }
+
+        debug(`Snippet not found in any page`);
+        return null;
+      }
+      return null;
+    } catch (error) {
+      debug(`Failed to find exact page for item ${itemId}: ${error}`);
+      return null;
+    }
+  }
+
+  /**
    * Open PDF attachment for an item
    */
   async openPDF(itemId: number): Promise<void> {
@@ -276,9 +422,32 @@ export class ZoteroAPI {
       const attachment = await item.getBestAttachment();
       if (!attachment) return;
 
-      Zotero.OpenPDF.openToPage(attachment);
+      await Zotero.Reader.open(attachment.id);
     } catch (error) {
       debug(`Failed to open PDF for item ${itemId}: ${error}`);
+    }
+  }
+
+  /**
+   * Open PDF to a specific page
+   * @param itemId - The parent item ID
+   * @param pageNumber - 1-based page number to navigate to
+   */
+  async openPDFToPage(itemId: number, pageNumber: number): Promise<void> {
+    try {
+      const item = this.getItem(itemId);
+      if (!item) return;
+
+      const attachment = await item.getBestAttachment();
+      if (!attachment) return;
+
+      // Convert 1-based page to 0-based pageIndex
+      const location = { pageIndex: pageNumber - 1 };
+
+      debug(`Opening PDF for item ${itemId} to page ${pageNumber}`);
+      await Zotero.Reader.open(attachment.id, location);
+    } catch (error) {
+      debug(`Failed to open PDF to page for item ${itemId}: ${error}`);
     }
   }
 

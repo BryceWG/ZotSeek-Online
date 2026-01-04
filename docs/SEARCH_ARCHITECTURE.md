@@ -10,7 +10,10 @@ A comprehensive guide to how semantic and hybrid search works in ZotSeek.
 2. [Search Modes](#search-modes)
 3. [Hybrid Search with RRF](#hybrid-search-with-rrf)
 4. [Semantic Search Pipeline](#semantic-search-pipeline)
+   - [MaxSim Aggregation](#maxsim-aggregation)
+   - [Parent-Child Retrieval Pattern](#parent-child-retrieval-pattern)
 5. [Section-Aware Chunking](#section-aware-chunking)
+   - [References Filtering](#references-filtering)
 6. [Performance Optimizations](#performance-optimizations)
 7. [Query Analysis](#query-analysis)
 
@@ -278,6 +281,74 @@ When a paper has multiple chunks, we use **MaxSim** (Maximum Similarity):
 
 This ensures that if *any* part of a paper matches your query, the paper ranks highly.
 
+### Parent-Child Retrieval Pattern
+
+ZotSeek implements a **parent-child retrieval pattern** that supports two granularity modes:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                   PARENT-CHILD RETRIEVAL                             │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  INDEXING: Paragraph-level (child chunks)                           │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ Paper A                                                      │   │
+│  │ ├── Chunk 0: Abstract (page 1, para 0)                      │   │
+│  │ ├── Chunk 1: Intro paragraph 1 (page 2, para 0)             │   │
+│  │ ├── Chunk 2: Intro paragraph 2 (page 2, para 1)             │   │
+│  │ ├── Chunk 3: Methods paragraph 1 (page 3, para 0)           │   │
+│  │ └── ...                                                      │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              │                                       │
+│              ┌───────────────┴───────────────┐                      │
+│              ▼                               ▼                       │
+│  ┌─────────────────────┐         ┌─────────────────────┐           │
+│  │  BY SECTION MODE    │         │  BY LOCATION MODE   │           │
+│  │  (returnAllChunks   │         │  (returnAllChunks   │           │
+│  │   = false)          │         │   = true)           │           │
+│  ├─────────────────────┤         ├─────────────────────┤           │
+│  │                     │         │                     │           │
+│  │ MaxSim aggregation  │         │ Return ALL chunks   │           │
+│  │ 1 result per paper  │         │ with individual     │           │
+│  │ Best chunk score    │         │ scores & locations  │           │
+│  │                     │         │                     │           │
+│  │ Result:             │         │ Results:            │           │
+│  │ Paper A: 89%        │         │ Paper A, p3 ¶0: 89% │           │
+│  │ (Methods section)   │         │ Paper A, p2 ¶1: 52% │           │
+│  │                     │         │ Paper A, p1 ¶0: 45% │           │
+│  └─────────────────────┘         └─────────────────────┘           │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### By Section Mode (Default)
+
+- **Aggregation**: MaxSim - returns highest similarity across all chunks
+- **Results**: 1 result per paper
+- **Display**: Shows which section matched (Abstract, Methods, Results)
+- **Use case**: Overview of matching papers
+
+#### By Location Mode
+
+- **Aggregation**: None - returns every matching chunk
+- **Results**: Multiple results per paper (one per matching paragraph)
+- **Display**: Shows exact page & paragraph number
+- **Use case**: Finding specific passages, evidence linking
+
+#### Technical Implementation
+
+```typescript
+// Search options
+interface SearchOptions {
+  returnAllChunks?: boolean;  // true = By Location, false = By Section
+}
+
+// RRF fusion key changes based on mode
+const key = returnAllChunks
+  ? `${itemId}-${chunkIndex}`  // Unique per chunk
+  : String(itemId);            // Unique per paper
+```
+
 ---
 
 ## Section-Aware Chunking
@@ -369,6 +440,45 @@ When a PDF doesn't have recognizable section headers (e.g., book chapters, repor
 | No PDF, no abstract | title only | Abstract |
 
 The search still works perfectly with `content` chunks - you just won't know which *part* of the document matched.
+
+### References Filtering
+
+The chunker automatically detects and excludes bibliography sections to keep search results focused on actual content:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    REFERENCES FILTERING                              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  PDF TEXT PROCESSING:                                                │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ Page 1: Abstract...                    ✓ INDEXED            │   │
+│  │ Page 2: Introduction...                ✓ INDEXED            │   │
+│  │ Page 3: Methods...                     ✓ INDEXED            │   │
+│  │ Page 4: Results...                     ✓ INDEXED            │   │
+│  │ Page 5: Discussion...                  ✓ INDEXED            │   │
+│  │ Page 6: Conclusion...                  ✓ INDEXED            │   │
+│  │ Page 7: References                     ✗ HEADER DETECTED    │   │
+│  │         [1] Smith, J. (2021)...        ✗ SKIPPED            │   │
+│  │         [2] Jones, A. (2020)...        ✗ SKIPPED            │   │
+│  │ Page 8: More references...             ✗ SKIPPED            │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  DETECTION PATTERNS:                                                 │
+│  ├── Headers: "References", "Bibliography", "Works Cited",          │
+│  │            "Literature Cited", "Citations"                        │
+│  │                                                                   │
+│  └── Citation entries (fallback if header missed):                  │
+│      ├── [1], [2], [3]...         (numbered style)                  │
+│      ├── 1. Author...              (numbered list)                  │
+│      ├── Smith, J. A. (2021).     (APA style)                       │
+│      ├── doi: 10.1234/...         (DOI pattern)                     │
+│      └── pp. 123-456, Vol. 12     (publication details)             │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Once a references header is detected, all remaining pages are skipped. Individual citation entries are also detected as a fallback in case the header was missed.
 
 ### Performance-Optimized Chunking
 

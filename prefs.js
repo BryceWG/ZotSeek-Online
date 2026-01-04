@@ -12,10 +12,10 @@ pref("extensions.zotero.zotseek.indexingMode", "abstract");
 // Chunking options for nomic-embed-text-v1.5 (8192 token context)
 // PERFORMANCE: Smaller chunks = faster embedding (~O(n²) attention cost)
 // - 7000 tokens: ~45 sec/chunk (too slow!)
-// - 2000 tokens: ~3-5 sec/chunk (acceptable)
-// Use more smaller chunks instead of fewer large chunks
-pref("extensions.zotero.zotseek.maxTokens", 2000);
-pref("extensions.zotero.zotseek.maxChunksPerPaper", 8);
+// - 800 tokens: ~0.3-0.5 sec/chunk (very fast!)
+// Paragraph-level chunking creates many small chunks for precise page location
+pref("extensions.zotero.zotseek.maxTokens", 800);
+pref("extensions.zotero.zotseek.maxChunksPerPaper", 100);
 
 // Item type filtering
 // Exclude books from search results (books lack paper sections and are too long to index well)

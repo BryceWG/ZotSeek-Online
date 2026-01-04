@@ -16,11 +16,14 @@ export interface SearchResult {
   itemId: number;
   itemKey: string;
   title: string;
-  similarity: number;       // 0-1 cosine similarity (max across chunks)
+  similarity: number;       // 0-1 cosine similarity (max across chunks, or per-chunk if returnAllChunks)
   textSource: TextSourceType;  // Section type: summary, methods, findings, content
   matchedChunkIndex?: number;  // Which chunk had the highest similarity
+  chunkIndex?: number;        // Chunk index (when returnAllChunks=true)
   authors?: string[];         // Optional: author names for display
   year?: number;              // Optional: publication year for display
+  pageNumber?: number;        // 1-based page number of matched chunk
+  paragraphIndex?: number;    // 0-based paragraph index within page
 }
 
 export interface SearchOptions {
@@ -28,11 +31,13 @@ export interface SearchOptions {
   minSimilarity?: number;
   libraryId?: number;
   excludeItemIds?: number[];
+  returnAllChunks?: boolean;  // If true, return all matching chunks instead of MaxSim aggregation
 }
 
 const DEFAULT_OPTIONS: Required<Omit<SearchOptions, 'libraryId' | 'excludeItemIds'>> = {
   topK: 20,
   minSimilarity: 0.3,
+  returnAllChunks: false,
 };
 
 /**
@@ -45,6 +50,8 @@ interface ItemSimilarity {
   textSource: TextSourceType;
   maxSimilarity: number;
   matchedChunkIndex: number;
+  pageNumber?: number;
+  paragraphIndex?: number;
 }
 
 export class SearchEngine {
@@ -136,8 +143,10 @@ export class SearchEngine {
       title: string;
       textSource: TextSourceType;
       embedding: Float32Array;
+      pageNumber?: number;
+      paragraphIndex?: number;
     }>;
-    
+
     if (opts.libraryId !== undefined) {
       // For library-specific search, we still need to use the non-cached method
       // Convert to the cached format
@@ -161,6 +170,8 @@ export class SearchEngine {
           title: e.title,
           textSource: e.textSource,
           embedding: float32Embedding,
+          pageNumber: e.pageNumber,
+          paragraphIndex: e.paragraphIndex,
         };
       });
     } else {
@@ -174,8 +185,15 @@ export class SearchEngine {
       embeddings = embeddings.filter(e => !excludeSet.has(e.itemId));
     }
 
-    // Use MaxSim aggregation with optimized Float32Array
-    const results = this.computeMaxSimResultsFloat32(queryFloat32, embeddings, opts.minSimilarity);
+    // Compute results: either all chunks or MaxSim aggregation
+    let results: SearchResult[];
+    if (opts.returnAllChunks) {
+      // Return all matching chunks (for location/paragraph-level results)
+      results = this.computeAllChunkResultsFloat32(queryFloat32, embeddings, opts.minSimilarity);
+    } else {
+      // Use MaxSim aggregation (one result per document with best chunk)
+      results = this.computeMaxSimResultsFloat32(queryFloat32, embeddings, opts.minSimilarity);
+    }
 
     // Sort by similarity (descending) and take top K
     results.sort((a, b) => b.similarity - a.similarity);
@@ -490,6 +508,8 @@ export class SearchEngine {
       title: string;
       textSource: TextSourceType;
       embedding: Float32Array;
+      pageNumber?: number;
+      paragraphIndex?: number;
     }>,
     minSimilarity: number
   ): SearchResult[] {
@@ -513,6 +533,8 @@ export class SearchEngine {
           textSource: chunk.textSource,
           maxSimilarity: similarity,
           matchedChunkIndex: chunk.chunkIndex,
+          pageNumber: chunk.pageNumber,
+          paragraphIndex: chunk.paragraphIndex,
         });
       }
     }
@@ -528,6 +550,56 @@ export class SearchEngine {
           similarity: item.maxSimilarity,
           textSource: item.textSource,
           matchedChunkIndex: item.matchedChunkIndex,
+          pageNumber: item.pageNumber,
+          paragraphIndex: item.paragraphIndex,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Compute ALL chunk results (no aggregation) with Float32Array
+   * Returns every matching chunk with its individual score and location
+   * Used for "By Location" mode in parent-child retrieval
+   */
+  private computeAllChunkResultsFloat32(
+    queryEmbedding: Float32Array,
+    embeddings: Array<{
+      itemId: number;
+      chunkIndex: number;
+      itemKey: string;
+      title: string;
+      textSource: TextSourceType;
+      embedding: Float32Array;
+      pageNumber?: number;
+      paragraphIndex?: number;
+    }>,
+    minSimilarity: number
+  ): SearchResult[] {
+    const results: SearchResult[] = [];
+
+    for (const chunk of embeddings) {
+      if (!chunk.embedding || chunk.embedding.length === 0) {
+        continue;
+      }
+
+      // Since both vectors are normalized, dot product = cosine similarity
+      const similarity = this.dotProductFloat32(queryEmbedding, chunk.embedding);
+
+      // Include all chunks above minSimilarity threshold
+      if (similarity >= minSimilarity) {
+        results.push({
+          itemId: chunk.itemId,
+          itemKey: chunk.itemKey,
+          title: chunk.title,
+          similarity,
+          textSource: chunk.textSource,
+          chunkIndex: chunk.chunkIndex,
+          matchedChunkIndex: chunk.chunkIndex,
+          pageNumber: chunk.pageNumber,
+          paragraphIndex: chunk.paragraphIndex,
         });
       }
     }

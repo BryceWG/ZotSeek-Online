@@ -41,6 +41,13 @@ export interface HybridSearchResult {
 
   // Original text source from semantic search (e.g., 'methods', 'findings', 'summary')
   textSource?: TextSourceType;
+
+  // Chunk identification (for all-chunks mode)
+  chunkIndex?: number;        // Chunk index within the item
+
+  // Location information from matched chunk
+  pageNumber?: number;        // 1-based page number
+  paragraphIndex?: number;    // 0-based paragraph index within page
 }
 
 export interface HybridSearchOptions {
@@ -66,6 +73,9 @@ export interface HybridSearchOptions {
 
   // Search mode override
   mode?: 'hybrid' | 'semantic' | 'keyword';
+
+  // Return all chunks instead of MaxSim aggregation (for location-level results)
+  returnAllChunks?: boolean;  // Default: false
 }
 
 const DEFAULT_OPTIONS: Required<Omit<HybridSearchOptions, 'collectionId' | 'libraryId' | 'mode'>> = {
@@ -75,6 +85,7 @@ const DEFAULT_OPTIONS: Required<Omit<HybridSearchOptions, 'collectionId' | 'libr
   rrfK: 60,
   minSimilarity: 0.3,
   semanticWeight: 0.5,
+  returnAllChunks: false,
 };
 
 export interface QueryAnalysis {
@@ -155,6 +166,9 @@ export class HybridSearchEngine {
       keywordRank: null,
       source: 'semantic' as const,
       textSource: r.textSource,
+      chunkIndex: r.chunkIndex,
+      pageNumber: r.pageNumber,
+      paragraphIndex: r.paragraphIndex,
     }));
 
     await this.populateItemMetadata(hybridResults.slice(0, opts.finalTopK));
@@ -194,7 +208,7 @@ export class HybridSearchEngine {
   private async semanticSearchQuery(
     query: string,
     opts: Required<Omit<HybridSearchOptions, 'collectionId' | 'libraryId' | 'mode'>> & HybridSearchOptions
-  ): Promise<Array<{ itemId: number; score: number; textSource?: TextSourceType }>> {
+  ): Promise<Array<{ itemId: number; score: number; textSource?: TextSourceType; chunkIndex?: number; pageNumber?: number; paragraphIndex?: number }>> {
     try {
       // Initialize search engine if needed
       if (!this.semanticSearch.isReady()) {
@@ -202,9 +216,10 @@ export class HybridSearchEngine {
       }
 
       const results = await this.semanticSearch.search(query, {
-        topK: opts.semanticTopK,
+        topK: opts.returnAllChunks ? opts.semanticTopK * 3 : opts.semanticTopK, // Get more chunks when returning all
         minSimilarity: opts.minSimilarity,
         libraryId: opts.libraryId,
+        returnAllChunks: opts.returnAllChunks,
       });
 
       // Filter out books if preference is set
@@ -229,6 +244,9 @@ export class HybridSearchEngine {
         itemId: r.itemId,
         score: r.similarity,
         textSource: r.textSource,
+        chunkIndex: r.chunkIndex,
+        pageNumber: r.pageNumber,
+        paragraphIndex: r.paragraphIndex,
       }));
     } catch (error) {
       this.logger.error('Semantic search failed:', error);
@@ -366,7 +384,7 @@ export class HybridSearchEngine {
    * @param opts - Options including rrfK and semanticWeight
    */
   private reciprocalRankFusion(
-    semanticResults: Array<{ itemId: number; score: number; textSource?: TextSourceType }>,
+    semanticResults: Array<{ itemId: number; score: number; textSource?: TextSourceType; chunkIndex?: number; pageNumber?: number; paragraphIndex?: number }>,
     keywordResults: Array<{ itemId: number; score: number }>,
     opts: Required<Omit<HybridSearchOptions, 'collectionId' | 'libraryId' | 'mode'>>
   ): HybridSearchResult[] {
@@ -374,29 +392,51 @@ export class HybridSearchEngine {
     const semanticWeight = opts.semanticWeight;
     const keywordWeight = 1 - semanticWeight;
 
-    // Build maps for quick lookup: itemId -> { rank, score }
-    const semanticMap = new Map<number, { rank: number; score: number; textSource?: TextSourceType }>();
+    // When returnAllChunks is true, use itemId-chunkIndex as key to preserve all chunks
+    // Otherwise, use just itemId (MaxSim-style aggregation)
+    const useChunkKey = opts.returnAllChunks;
+
+    // Build maps for quick lookup
+    // Key is either "itemId" or "itemId-chunkIndex" depending on mode
+    const semanticMap = new Map<string, { itemId: number; chunkIndex?: number; rank: number; score: number; textSource?: TextSourceType; pageNumber?: number; paragraphIndex?: number }>();
     semanticResults.forEach((r, index) => {
-      semanticMap.set(r.itemId, { rank: index + 1, score: r.score, textSource: r.textSource });
+      const key = useChunkKey ? `${r.itemId}-${r.chunkIndex ?? 0}` : String(r.itemId);
+      // In all-chunks mode, keep all entries; in MaxSim mode, keep only first (best) per item
+      if (!semanticMap.has(key)) {
+        semanticMap.set(key, {
+          itemId: r.itemId,
+          chunkIndex: r.chunkIndex,
+          rank: index + 1,
+          score: r.score,
+          textSource: r.textSource,
+          pageNumber: r.pageNumber,
+          paragraphIndex: r.paragraphIndex,
+        });
+      }
     });
 
-    const keywordMap = new Map<number, { rank: number; score: number }>();
+    const keywordMap = new Map<string, { itemId: number; rank: number; score: number }>();
     keywordResults.forEach((r, index) => {
-      keywordMap.set(r.itemId, { rank: index + 1, score: r.score });
+      const key = String(r.itemId);
+      if (!keywordMap.has(key)) {
+        keywordMap.set(key, { itemId: r.itemId, rank: index + 1, score: r.score });
+      }
     });
 
-    // Get all unique item IDs from both result sets
-    const allItemIds = new Set<number>([
-      ...semanticResults.map(r => r.itemId),
-      ...keywordResults.map(r => r.itemId),
+    // Get all unique keys from both result sets
+    const allKeys = new Set<string>([
+      ...semanticMap.keys(),
+      ...keywordResults.map(r => String(r.itemId)),
     ]);
 
-    // Calculate RRF score for each unique item
+    // Calculate RRF score for each unique entry
     const fusedResults: HybridSearchResult[] = [];
 
-    for (const itemId of allItemIds) {
-      const semantic = semanticMap.get(itemId);
-      const keyword = keywordMap.get(itemId);
+    for (const key of allKeys) {
+      const semantic = semanticMap.get(key);
+      // For keyword, always use itemId (keyword search doesn't have chunks)
+      const itemId = semantic?.itemId ?? parseInt(key.split('-')[0]);
+      const keyword = keywordMap.get(String(itemId));
 
       // RRF formula with weights:
       // RRF(d) = semanticWeight / (k + semantic_rank) + keywordWeight / (k + keyword_rank)
@@ -431,6 +471,9 @@ export class HybridSearchEngine {
         keywordRank: keyword?.rank ?? null,
         source,
         textSource: semantic?.textSource,
+        chunkIndex: semantic?.chunkIndex,
+        pageNumber: semantic?.pageNumber,
+        paragraphIndex: semantic?.paragraphIndex,
       });
     }
 

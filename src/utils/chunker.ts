@@ -14,11 +14,28 @@ export interface Chunk {
   text: string;
   type: 'summary' | 'methods' | 'findings' | 'content';
   tokenCount?: number;
+
+  // Passage-level location (Phase 2: evidence linking)
+  pageNumber?: number;        // 1-based estimated page number
+  paragraphIndex?: number;    // 0-based paragraph index within the chunk's source
+  startChar?: number;         // Character offset in source fulltext
+  endChar?: number;           // End character offset in source fulltext
+}
+
+/**
+ * Extended chunk with location data for passage-level linking
+ */
+export interface ChunkWithLocation extends Chunk {
+  pageNumber: number;         // 1-based page number (required)
+  paragraphIndex: number;     // 0-based paragraph index (required)
+  startChar: number;          // Start character offset (required)
+  endChar: number;            // End character offset (required)
 }
 
 export interface ChunkOptions {
   maxTokens?: number;      // Safety limit (default: 7000)
   maxChunks?: number;      // Max chunks per paper (default: 5)
+  totalPages?: number;     // Total pages from Zotero.Fulltext.getPages() for calibrated estimation
 }
 
 // Two clear modes
@@ -27,11 +44,11 @@ export type IndexingMode = 'abstract' | 'full';
 // Default options for nomic-embed-v1.5 (8192 token limit)
 // PERFORMANCE: Smaller chunks embed MUCH faster due to O(n²) attention
 // - 7000 tokens: ~45 seconds per chunk (too slow!)
-// - 2000 tokens: ~3-5 seconds per chunk (acceptable)
-// With maxChunks=8 and maxTokens=2000, we can still cover full papers
+// - 500 tokens: ~0.3-0.5 seconds per chunk (very fast!)
+// With paragraph-level chunking, we need many more chunks
 const DEFAULT_OPTIONS: Required<ChunkOptions> = {
-  maxTokens: 2000,    // ~6000 chars - fast embedding (~3-5 sec)
-  maxChunks: 8,       // More smaller chunks for better coverage
+  maxTokens: 800,     // ~2400 chars - typical paragraph size, very fast embedding
+  maxChunks: 100,     // Allow up to 100 paragraphs per paper (covers most papers)
 };
 
 // Patterns to identify section boundaries
@@ -51,6 +68,102 @@ export function estimateTokens(text: string): number {
   if (!text) return 0;
   const words = text.split(/\s+/).filter(w => w.length > 0);
   return Math.ceil(words.length * 1.3);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGE ESTIMATION UTILITIES (Phase 2: passage-level location)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Default characters per page for academic papers (fallback)
+ * Based on: ~3000 chars for a typical double-column PDF page
+ */
+const DEFAULT_CHARS_PER_PAGE = 3000;
+
+/**
+ * Page estimation context - allows calibrated estimation per document
+ * When totalPages is known (from Zotero.Fulltext.getPages), we can calculate
+ * the actual chars/page for this specific document.
+ */
+export interface PageEstimationContext {
+  totalChars: number;      // Total characters in fulltext
+  totalPages?: number;     // Total pages from Zotero (if available)
+  charsPerPage: number;    // Calculated or default chars per page
+}
+
+/**
+ * Create a page estimation context for a document
+ * Uses calibrated chars/page when totalPages is available from Zotero
+ */
+export function createPageEstimationContext(
+  totalChars: number,
+  totalPages?: number
+): PageEstimationContext {
+  // If we know the total pages, calculate actual chars per page for this document
+  const charsPerPage = (totalPages && totalPages > 0)
+    ? Math.floor(totalChars / totalPages)
+    : DEFAULT_CHARS_PER_PAGE;
+
+  return {
+    totalChars,
+    totalPages,
+    charsPerPage,
+  };
+}
+
+/**
+ * Estimate page number from character offset in fulltext
+ * Returns 1-based page number
+ *
+ * @param charOffset - Character position in the fulltext
+ * @param context - Optional calibration context (uses default if not provided)
+ */
+export function estimatePageNumber(
+  charOffset: number,
+  context?: PageEstimationContext
+): number {
+  if (charOffset <= 0) return 1;
+
+  const charsPerPage = context?.charsPerPage || DEFAULT_CHARS_PER_PAGE;
+
+  // Clamp to totalPages if known
+  const estimatedPage = Math.floor(charOffset / charsPerPage) + 1;
+  if (context?.totalPages) {
+    return Math.min(estimatedPage, context.totalPages);
+  }
+  return estimatedPage;
+}
+
+/**
+ * Estimate which page a text range falls on (using midpoint)
+ */
+export function estimatePageForRange(
+  startChar: number,
+  endChar: number,
+  context?: PageEstimationContext
+): number {
+  const midpoint = (startChar + endChar) / 2;
+  return estimatePageNumber(midpoint, context);
+}
+
+/**
+ * Count paragraphs in text up to a given position
+ * Paragraphs are separated by double newlines
+ */
+export function countParagraphsUpTo(text: string, charPosition: number): number {
+  if (charPosition <= 0) return 0;
+  const textUpTo = text.substring(0, charPosition);
+  const paragraphs = textUpTo.split(/\n\n+/);
+  return paragraphs.length - 1; // 0-indexed
+}
+
+/**
+ * Location tracking context for chunking
+ */
+export interface LocationContext {
+  sourceText: string;           // The full source text
+  currentCharOffset: number;    // Current position in source text
+  paragraphCount: number;       // Running paragraph count
 }
 
 /**
@@ -83,123 +196,174 @@ function truncateToTokens(text: string, maxTokens: number): string {
 /**
  * Split a large text into multiple chunks at paragraph boundaries
  * Returns array of chunks, each within maxTokens limit
+ *
+ * @param sourceStartOffset - Character offset where this text starts in full source (for location)
+ * @param paragraphStartIndex - Starting paragraph index (for location tracking)
+ * @param pageContext - Optional calibration context for accurate page estimation
  */
 function splitTextIntoChunks(
   text: string,
   titlePrefix: string,
   maxTokens: number,
-  type: 'methods' | 'findings' | 'content'
+  type: 'methods' | 'findings' | 'content',
+  sourceStartOffset: number = 0,
+  paragraphStartIndex: number = 0,
+  pageContext?: PageEstimationContext
 ): Chunk[] {
   const chunks: Chunk[] = [];
   const titleTokens = estimateTokens(titlePrefix) + 10; // Buffer for newlines
   const availableTokens = maxTokens - titleTokens;
   
-  // If text fits in one chunk, return it
+  // If text fits in one chunk, return it with location data
   const textTokens = estimateTokens(text);
   if (textTokens <= availableTokens) {
+    const startChar = sourceStartOffset;
+    const endChar = sourceStartOffset + text.length;
     chunks.push({
       index: 0,
       text: `${titlePrefix}\n\n${text}`,
       type,
       tokenCount: textTokens + titleTokens,
+      // Location data (Phase 2) - uses calibrated page estimation
+      startChar,
+      endChar,
+      pageNumber: estimatePageForRange(startChar, endChar, pageContext),
+      paragraphIndex: paragraphStartIndex,
     });
     return chunks;
   }
   
-  // Split into paragraphs
-  const paragraphs = text.split(/\n\n+/).filter(p => p.trim().length > 50);
-  
+  // Split into paragraphs with position tracking
+  const paragraphSplits = text.split(/\n\n+/);
+  const paragraphs: Array<{ text: string; start: number; end: number }> = [];
+  let searchPos = 0;
+  for (const p of paragraphSplits) {
+    if (p.trim().length > 50) {
+      const idx = text.indexOf(p, searchPos);
+      const start = idx >= 0 ? idx : searchPos;
+      paragraphs.push({ text: p, start, end: start + p.length });
+      searchPos = start + p.length;
+    }
+  }
+
   let currentChunk = '';
   let currentTokens = 0;
+  // Location tracking
+  let chunkStartChar = sourceStartOffset;
+  let chunkEndChar = sourceStartOffset;
+  let chunkParagraphIdx = paragraphStartIndex;
+  let runningParagraphIdx = paragraphStartIndex;
   
+  // Helper to flush current chunk with location data (uses calibrated page estimation)
+  const flushCurrentChunk = () => {
+    if (currentChunk.trim()) {
+      chunks.push({
+        index: chunks.length,
+        text: `${titlePrefix}\n\n${currentChunk.trim()}`,
+        type,
+        tokenCount: currentTokens + titleTokens,
+        // Location data - uses calibrated page estimation
+        startChar: chunkStartChar,
+        endChar: chunkEndChar,
+        pageNumber: estimatePageForRange(chunkStartChar, chunkEndChar, pageContext),
+        paragraphIndex: chunkParagraphIdx,
+      });
+    }
+  };
+
   for (const para of paragraphs) {
-    const paraTokens = estimateTokens(para);
-    
+    const paraTokens = estimateTokens(para.text);
+    const paraStartChar = sourceStartOffset + para.start;
+    const paraEndChar = sourceStartOffset + para.end;
+
     // If single paragraph is too large, split it by sentences
     if (paraTokens > availableTokens) {
       // Flush current chunk first
-      if (currentChunk.trim()) {
-        chunks.push({
-          index: chunks.length,
-          text: `${titlePrefix}\n\n${currentChunk.trim()}`,
-          type,
-          tokenCount: currentTokens + titleTokens,
-        });
-        currentChunk = '';
-        currentTokens = 0;
-      }
-      
+      flushCurrentChunk();
+      currentChunk = '';
+      currentTokens = 0;
+      chunkStartChar = paraStartChar;
+      chunkParagraphIdx = runningParagraphIdx;
+
       // Split paragraph by sentences
-      const sentences = para.match(/[^.!?]+[.!?]+/g) || [para];
+      const sentences = para.text.match(/[^.!?]+[.!?]+/g) || [para.text];
       for (const sentence of sentences) {
         const sentTokens = estimateTokens(sentence);
         if (currentTokens + sentTokens > availableTokens && currentChunk.trim()) {
-          chunks.push({
-            index: chunks.length,
-            text: `${titlePrefix}\n\n${currentChunk.trim()}`,
-            type,
-            tokenCount: currentTokens + titleTokens,
-          });
+          chunkEndChar = paraStartChar + currentChunk.length;
+          flushCurrentChunk();
           currentChunk = sentence;
           currentTokens = sentTokens;
+          chunkStartChar = chunkEndChar;
+          chunkParagraphIdx = runningParagraphIdx;
         } else {
           currentChunk += sentence;
           currentTokens += sentTokens;
         }
       }
+      chunkEndChar = paraEndChar;
     }
     // Check if adding this paragraph would exceed limit
     else if (currentTokens + paraTokens > availableTokens) {
       // Save current chunk and start new one
-      if (currentChunk.trim()) {
-        chunks.push({
-          index: chunks.length,
-          text: `${titlePrefix}\n\n${currentChunk.trim()}`,
-          type,
-          tokenCount: currentTokens + titleTokens,
-        });
-      }
-      currentChunk = para + '\n\n';
+      flushCurrentChunk();
+      currentChunk = para.text + '\n\n';
       currentTokens = paraTokens;
+      chunkStartChar = paraStartChar;
+      chunkEndChar = paraEndChar;
+      chunkParagraphIdx = runningParagraphIdx;
     } else {
-      currentChunk += para + '\n\n';
+      if (currentChunk === '') {
+        chunkStartChar = paraStartChar;
+        chunkParagraphIdx = runningParagraphIdx;
+      }
+      currentChunk += para.text + '\n\n';
       currentTokens += paraTokens;
+      chunkEndChar = paraEndChar;
     }
+
+    runningParagraphIdx++;
   }
-  
+
   // Don't forget the last chunk
-  if (currentChunk.trim()) {
-    chunks.push({
-      index: chunks.length,
-      text: `${titlePrefix}\n\n${currentChunk.trim()}`,
-      type,
-      tokenCount: currentTokens + titleTokens,
-    });
-  }
-  
+  flushCurrentChunk();
+
   return chunks;
 }
 
 /**
+ * Semantic section with location offset
+ */
+interface SemanticSection {
+  text: string;
+  startOffset: number;  // Character offset in source fulltext
+}
+
+/**
  * Split fulltext into semantic sections (methods vs findings)
+ * Now returns offsets for location tracking
  */
 function splitIntoSemanticSections(fulltext: string): {
-  methods: string | null;
-  findings: string | null;
+  methods: SemanticSection | null;
+  findings: SemanticSection | null;
 } {
   // Try to find the boundary between methods and findings
   const findingsMatch = SECTION_PATTERNS.findings.exec(fulltext);
-  
+
   if (findingsMatch && findingsMatch.index && findingsMatch.index > 500) {
-    const methodsPart = fulltext.substring(0, findingsMatch.index).trim();
-    const findingsPart = fulltext.substring(findingsMatch.index).trim();
-    
+    const methodsText = fulltext.substring(0, findingsMatch.index).trim();
+    const findingsText = fulltext.substring(findingsMatch.index).trim();
+
+    // Find actual start offsets (accounting for trim)
+    const methodsStart = fulltext.indexOf(methodsText);
+    const findingsStart = findingsMatch.index + (fulltext.substring(findingsMatch.index).indexOf(findingsText.substring(0, 50)));
+
     return {
-      methods: methodsPart.length > 300 ? methodsPart : null,
-      findings: findingsPart.length > 300 ? findingsPart : null,
+      methods: methodsText.length > 300 ? { text: methodsText, startOffset: methodsStart >= 0 ? methodsStart : 0 } : null,
+      findings: findingsText.length > 300 ? { text: findingsText, startOffset: findingsStart >= 0 ? findingsStart : findingsMatch.index } : null,
     };
   }
-  
+
   // No clear boundary found - return null to trigger fallback
   return { methods: null, findings: null };
 }
@@ -231,23 +395,29 @@ export function chunkDocument(
   // ═══════════════════════════════════════════════════════════════════════
   // CHUNK 1: Summary (always included in both modes)
   // Purpose: "What is this paper about?"
+  // Note: Summary chunks don't have fulltext location (they come from metadata)
   // ═══════════════════════════════════════════════════════════════════════
   const summaryText = abstract && abstract.length > 50
     ? `${titlePrefix}\n\n${abstract}`
     : titlePrefix;
-  
+
   chunks.push({
     index: 0,
     text: summaryText,
     type: 'summary',
     tokenCount: estimateTokens(summaryText),
+    // Summary has no fulltext location (comes from item metadata, not PDF)
+    pageNumber: 1,  // Abstracts are typically on page 1
+    paragraphIndex: 0,
+    startChar: undefined,  // No fulltext offset for metadata-sourced chunks
+    endChar: undefined,
   });
   
   // For abstract mode, we're done
   if (mode === 'abstract') {
     return chunks;
   }
-  
+
   // ═══════════════════════════════════════════════════════════════════════
   // FULL MODE: Add section-based chunks from PDF
   // ═══════════════════════════════════════════════════════════════════════
@@ -255,10 +425,18 @@ export function chunkDocument(
     // No meaningful fulltext available
     return chunks;
   }
-  
+
+  // Create page estimation context for calibrated page numbers
+  // If totalPages is provided (from Zotero.Fulltext.getPages), we use it to
+  // calculate actual chars/page for this specific document
+  const pageContext = createPageEstimationContext(fulltext.length, opts.totalPages);
+
   // Try to split into semantic sections
   const sections = splitIntoSemanticSections(fulltext);
-  
+
+  // Track running paragraph index across sections
+  let runningParagraphIdx = 0;
+
   if (sections.methods || sections.findings) {
     // ─────────────────────────────────────────────────────────────────────
     // CHUNK 2+: Methods section(s)
@@ -266,7 +444,15 @@ export function chunkDocument(
     // Split into multiple chunks if too large for fast embedding
     // ─────────────────────────────────────────────────────────────────────
     if (sections.methods) {
-      const methodChunks = splitTextIntoChunks(sections.methods, titlePrefix, opts.maxTokens, 'methods');
+      const methodChunks = splitTextIntoChunks(
+        sections.methods.text,
+        titlePrefix,
+        opts.maxTokens,
+        'methods',
+        sections.methods.startOffset,
+        runningParagraphIdx,
+        pageContext  // Pass calibrated page estimation context
+      );
       for (const chunk of methodChunks) {
         if (chunks.length >= opts.maxChunks) break;
         chunks.push({
@@ -274,14 +460,24 @@ export function chunkDocument(
           index: chunks.length,
         });
       }
+      // Update running paragraph index
+      runningParagraphIdx += sections.methods.text.split(/\n\n+/).length;
     }
-    
+
     // ─────────────────────────────────────────────────────────────────────
     // CHUNK N+: Findings section(s)
     // Purpose: "What did they find?"
     // ─────────────────────────────────────────────────────────────────────
     if (sections.findings) {
-      const findingsChunks = splitTextIntoChunks(sections.findings, titlePrefix, opts.maxTokens, 'findings');
+      const findingsChunks = splitTextIntoChunks(
+        sections.findings.text,
+        titlePrefix,
+        opts.maxTokens,
+        'findings',
+        sections.findings.startOffset,
+        runningParagraphIdx,
+        pageContext  // Pass calibrated page estimation context
+      );
       for (const chunk of findingsChunks) {
         if (chunks.length >= opts.maxChunks) break;
         chunks.push({
@@ -294,7 +490,15 @@ export function chunkDocument(
     // ─────────────────────────────────────────────────────────────────────
     // FALLBACK: No clear sections found, split content into chunks
     // ─────────────────────────────────────────────────────────────────────
-    const contentChunks = splitTextIntoChunks(fulltext, titlePrefix, opts.maxTokens, 'content');
+    const contentChunks = splitTextIntoChunks(
+      fulltext,
+      titlePrefix,
+      opts.maxTokens,
+      'content',
+      0,  // Start at beginning of fulltext
+      0,  // Start paragraph index at 0
+      pageContext  // Pass calibrated page estimation context
+    );
     for (const chunk of contentChunks) {
       if (chunks.length >= opts.maxChunks) break;
       chunks.push({
@@ -327,4 +531,307 @@ export function getChunkOptionsFromPrefs(Zotero: any): ChunkOptions {
 export function getIndexingMode(Zotero: any): IndexingMode {
   const mode = Zotero?.Prefs?.get('zotseek.indexingMode', true);
   return mode === 'full' ? 'full' : 'abstract';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGE-BY-PAGE CHUNKING (accurate page numbers from PDFWorker)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Input structure for page-by-page text
+ */
+export interface PageText {
+  pageNumber: number;  // 1-based page number
+  text: string;        // Text content of this page
+}
+
+/**
+ * Extract paragraphs from PDF page text
+ *
+ * Zotero's PDFWorker uses these markers:
+ * - \f (form feed, ASCII 12) = page break
+ * - \n = paragraph break (detected by pdf-worker's paragraph detection)
+ *
+ * This function respects these markers for accurate paragraph extraction.
+ */
+function extractParagraphsFromPage(pageText: string): string[] {
+  // Normalize: remove form feeds (page breaks within a page shouldn't exist)
+  // and normalize line endings
+  const normalized = pageText
+    .replace(/\f/g, '\n\n')  // Form feeds become paragraph breaks
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+
+  // Strategy 1: Try splitting on double newlines (clear paragraph markers)
+  let paragraphs = normalized
+    .split(/\n\n+/)
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
+
+  // If we got reasonable paragraphs (2+ with decent length), use them
+  if (paragraphs.length >= 2 && paragraphs.some(p => p.length > 100)) {
+    return paragraphs;
+  }
+
+  // Strategy 2: Split on single newlines that look like paragraph breaks
+  // Use a simple approach without lookbehind (not supported in all JS engines)
+  // Split on newlines, then merge lines that don't end with sentence punctuation
+  const lines = normalized.split(/\n/).filter(l => l.trim().length > 0);
+  paragraphs = [];
+  let currentPara = '';
+
+  for (const line of lines) {
+    const trimmedLine = line.trim();
+    if (currentPara === '') {
+      currentPara = trimmedLine;
+    } else {
+      // Check if previous line ended with sentence punctuation
+      const endsWithPunctuation = /[.!?:"]$/.test(currentPara);
+      // Check if this line starts with capital letter or number (new paragraph indicator)
+      const startsWithCapital = /^[A-Z0-9]/.test(trimmedLine);
+
+      if (endsWithPunctuation && startsWithCapital && currentPara.length > 80) {
+        // Looks like a paragraph break
+        paragraphs.push(currentPara);
+        currentPara = trimmedLine;
+      } else {
+        // Continue the same paragraph
+        currentPara += ' ' + trimmedLine;
+      }
+    }
+  }
+  if (currentPara.trim().length > 0) {
+    paragraphs.push(currentPara.trim());
+  }
+
+  if (paragraphs.length >= 2) {
+    return paragraphs;
+  }
+
+  // Strategy 3: Fixed-size sliding window chunking
+  // When text has no clear structure, chunk by ~400 characters at sentence boundaries
+  const CHUNK_TARGET = 400;
+  const chunks: string[] = [];
+  let remaining = normalized.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+
+  while (remaining.length > 0) {
+    if (remaining.length <= CHUNK_TARGET * 1.3) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // Find a sentence boundary near the target
+    const searchEnd = Math.min(remaining.length, CHUNK_TARGET * 1.5);
+    const searchText = remaining.substring(0, searchEnd);
+
+    // Look for sentence end closest to target
+    let bestSplit = -1;
+    let match;
+    const sentenceEndRegex = /[.!?]\s+/g;
+    while ((match = sentenceEndRegex.exec(searchText)) !== null) {
+      const pos = match.index + match[0].length;
+      if (pos >= CHUNK_TARGET * 0.7) {
+        bestSplit = pos;
+        break;
+      }
+      bestSplit = pos;
+    }
+
+    if (bestSplit > 0) {
+      chunks.push(remaining.substring(0, bestSplit).trim());
+      remaining = remaining.substring(bestSplit).trim();
+    } else {
+      const spacePos = remaining.lastIndexOf(' ', CHUNK_TARGET);
+      if (spacePos > CHUNK_TARGET * 0.5) {
+        chunks.push(remaining.substring(0, spacePos).trim());
+        remaining = remaining.substring(spacePos).trim();
+      } else {
+        chunks.push(remaining.substring(0, CHUNK_TARGET).trim());
+        remaining = remaining.substring(CHUNK_TARGET).trim();
+      }
+    }
+  }
+
+  return chunks;
+}
+
+/**
+ * Chunk document using paragraph-level granularity with exact page numbers
+ * Each paragraph becomes its own chunk for maximum precision
+ *
+ * @param title - Paper title
+ * @param abstract - Paper abstract
+ * @param pages - Array of {pageNumber, text} from PDFWorker
+ * @param mode - 'abstract' or 'full'
+ * @param options - Chunking options
+ */
+export function chunkDocumentWithPages(
+  title: string,
+  abstract: string | null,
+  pages: PageText[] | null,
+  mode: IndexingMode,
+  options: ChunkOptions = {}
+): Chunk[] {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const chunks: Chunk[] = [];
+
+  // Prepare title prefix (shorter for paragraph chunks)
+  const titlePrefix = title.length > 200
+    ? title.substring(0, 200) + '...'
+    : title;
+
+  const titleTokens = estimateTokens(titlePrefix) + 5;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // CHUNK 1: Summary (always included)
+  // ═══════════════════════════════════════════════════════════════════════
+  const summaryText = abstract && abstract.length > 50
+    ? `${titlePrefix}\n\n${abstract}`
+    : titlePrefix;
+
+  chunks.push({
+    index: 0,
+    text: summaryText,
+    type: 'summary',
+    tokenCount: estimateTokens(summaryText),
+    pageNumber: 1,  // Abstracts are typically on page 1
+    paragraphIndex: 0,
+  });
+
+  // For abstract mode, we're done
+  if (mode === 'abstract') {
+    return chunks;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // FULL MODE: Create PARAGRAPH-LEVEL chunks with exact page numbers
+  // Each meaningful paragraph gets its own embedding for precise retrieval
+  // ═══════════════════════════════════════════════════════════════════════
+  if (!pages || pages.length === 0) {
+    return chunks;
+  }
+
+  // Minimum text to be indexed (lowered to capture more content)
+  const MIN_PARA_LENGTH = 50;   // ~10 words minimum
+  const MIN_PARA_TOKENS = 15;   // Very short segments can still be useful
+
+  // Classify text section based on content patterns
+  const classifySection = (text: string): 'methods' | 'findings' | 'content' => {
+    const lowerText = text.toLowerCase();
+    if (/\b(results?|findings?|discussion|conclusion|analysis|implications)\b/i.test(lowerText.substring(0, 100))) {
+      return 'findings';
+    }
+    if (/\b(method|approach|data|study|sample|participants?|procedure|design)\b/i.test(lowerText.substring(0, 100))) {
+      return 'methods';
+    }
+    return 'content';
+  };
+
+  // Detect if we've reached the References/Bibliography section
+  const isReferencesHeader = (text: string): boolean => {
+    const firstLine = text.split('\n')[0].trim().toLowerCase();
+    // Match common reference section headers
+    return /^(references?|bibliography|works?\s*cited|literature\s*cited|citations?)$/i.test(firstLine) ||
+           /^\d+\.?\s*(references?|bibliography)$/i.test(firstLine);
+  };
+
+  // Detect if text looks like a citation/reference entry
+  const isReferenceEntry = (text: string): boolean => {
+    // References typically have: Author, A. B. (Year). Title...
+    // Or numbered: [1] Author...
+    const patterns = [
+      /^\[\d+\]/,                                    // [1] style
+      /^\d+\.\s+[A-Z]/,                             // 1. Author style
+      /^[A-Z][a-z]+,\s*[A-Z]\.\s*[A-Z]?\.\s*\(/,   // Smith, J. A. (
+      /\(\d{4}[a-z]?\)\./,                          // (2021). or (2021a).
+      /doi:\s*10\./i,                               // DOI pattern
+      /https?:\/\/doi\.org/i,                       // DOI URL
+      /pp\.\s*\d+[-–]\d+/,                          // pp. 123-456
+      /Vol\.\s*\d+/i,                               // Vol. 12
+    ];
+    return patterns.some(p => p.test(text));
+  };
+
+  // Track if we've entered the references section
+  let inReferencesSection = false;
+
+  // Process each page and extract paragraphs using robust extraction
+  for (const page of pages) {
+    if (chunks.length >= opts.maxChunks) break;
+    if (inReferencesSection) break; // Stop processing if we've hit references
+
+    // Skip pages with very little text
+    if (page.text.trim().length < 100) continue;
+
+    // Use robust paragraph extraction
+    const paragraphs = extractParagraphsFromPage(page.text);
+
+    let paragraphIdx = 0;
+    for (const para of paragraphs) {
+      if (chunks.length >= opts.maxChunks) break;
+
+      // Check if we've hit the references section
+      if (!inReferencesSection && isReferencesHeader(para)) {
+        inReferencesSection = true;
+        // Skip the rest of this document
+        break;
+      }
+
+      // Skip if we're in references section
+      if (inReferencesSection) {
+        break; // Skip all remaining pages too
+      }
+
+      // Skip reference-like entries (in case header was missed)
+      if (isReferenceEntry(para)) {
+        paragraphIdx++;
+        continue;
+      }
+
+      // Skip too short paragraphs
+      if (para.length < MIN_PARA_LENGTH) {
+        paragraphIdx++;
+        continue;
+      }
+
+      const paraTokens = estimateTokens(para);
+
+      // Skip very short paragraphs by token count
+      if (paraTokens < MIN_PARA_TOKENS) {
+        paragraphIdx++;
+        continue;
+      }
+
+      // Truncate very long paragraphs to maxTokens
+      let chunkText = para;
+      if (paraTokens > opts.maxTokens - titleTokens) {
+        // Truncate at sentence boundary
+        const targetLength = Math.floor(para.length * (opts.maxTokens - titleTokens) / paraTokens * 0.9);
+        const truncated = para.substring(0, targetLength);
+        const lastSentence = Math.max(
+          truncated.lastIndexOf('. '),
+          truncated.lastIndexOf('.\n'),
+          truncated.lastIndexOf('? '),
+          truncated.lastIndexOf('! ')
+        );
+        chunkText = lastSentence > targetLength * 0.5
+          ? truncated.substring(0, lastSentence + 1).trim()
+          : truncated.trim() + '...';
+      }
+
+      const sectionType = classifySection(chunkText);
+      chunks.push({
+        index: chunks.length,
+        text: `${titlePrefix}\n\n${chunkText}`,
+        type: sectionType,
+        tokenCount: estimateTokens(chunkText) + titleTokens,
+        pageNumber: page.pageNumber,  // Exact page number!
+        paragraphIndex: paragraphIdx,
+      });
+
+      paragraphIdx++;
+    }
+  }
+
+  return chunks.slice(0, opts.maxChunks);
 }

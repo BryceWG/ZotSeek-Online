@@ -842,6 +842,11 @@ class ZotSeekPlugin {
               modelId: embeddingResult.modelId,
               indexedAt: new Date().toISOString(),
               contentHash: extracted.contentHash,
+              // Passage-level location (Phase 2)
+              pageNumber: chunk.pageNumber,
+              paragraphIndex: chunk.paragraphIndex,
+              startChar: chunk.startChar,
+              endChar: chunk.endChar,
             });
           }
         }

@@ -46,6 +46,21 @@
       <label id="search-mode-hint" value="Match type: 🔗 both searches · 🧠 AI match · 🔤 keyword match" style="margin-left: 12px; color: #999; font-size: 11px;"/>
     </hbox>
 
+    <!-- Results Granularity Toggle -->
+    <hbox id="granularity-row" align="center" style="margin-bottom: 8px;">
+      <label value="Results:" style="margin-right: 8px; min-width: 50px; color: #666;"/>
+      <hbox align="center" style="gap: 16px;">
+        <html:label style="display: flex; align-items: center; cursor: pointer;">
+          <html:input type="radio" name="granularity" id="granularity-section" value="section" checked="checked" style="margin-right: 4px;"/>
+          <html:span>By Section</html:span>
+        </html:label>
+        <html:label style="display: flex; align-items: center; cursor: pointer;">
+          <html:input type="radio" name="granularity" id="granularity-location" value="location" style="margin-right: 4px;"/>
+          <html:span>By Location (exact page &amp; paragraph)</html:span>
+        </html:label>
+      </hbox>
+    </hbox>
+
     <!-- Status / Progress -->
     <hbox id="zotseek-status" align="center" style="min-height: 24px; margin: 5px 0;">
       <label id="zotseek-status-text" value="" style="color: #666;"/>

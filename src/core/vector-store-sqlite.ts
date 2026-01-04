@@ -43,6 +43,13 @@ export interface PaperEmbedding {
   modelId: string;
   indexedAt: string;
   contentHash: string;
+
+  // Passage-level location (Phase 1: passage-level evidence linking)
+  pageNumber?: number;       // 1-based page number (null for legacy/abstract-only)
+  paragraphIndex?: number;   // 0-based paragraph index within page
+  startChar?: number;        // Character offset in full extracted text
+  endChar?: number;          // End character offset
+  bbox?: string;             // JSON: [l, t, r, b] bounding box coordinates
 }
 
 export interface VectorStoreStats {
@@ -53,12 +60,16 @@ export interface VectorStoreStats {
   modelId: string;
   lastIndexed: Date | null;
   storageUsedBytes: number;
+
+  // Passage-level location stats
+  chunksWithLocation: number;     // Chunks that have page_number set
+  locationCoveragePercent: number; // Percentage of chunks with location data
 }
 
 // Database configuration
 const DB_NAME = 'zotseek';           // Schema name when attached
 const DB_FILE = 'zotseek.sqlite';    // Database filename
-const SCHEMA_VERSION = 3;            // Bumped for separate database migration
+const SCHEMA_VERSION = 4;            // Bumped for passage-level location support
 
 // Legacy table prefix (for migration from old schema)
 const LEGACY_TABLE_PREFIX = 'zs_';
@@ -81,6 +92,8 @@ export class VectorStoreSQLite {
       title: string;
       textSource: TextSourceType;
       embedding: Float32Array;
+      pageNumber?: number;
+      paragraphIndex?: number;
     }>;
     validAt: number;  // timestamp
   } | null = null;
@@ -157,6 +170,9 @@ export class VectorStoreSQLite {
       // Create tables if they don't exist
       this.logger.debug('Creating tables...');
       await this.createTables();
+
+      // Migrate to v4 (add location columns) if needed
+      await this.migrateToV4();
 
       this.initialized = true;
       this.logger.info('SQLite store initialized successfully');
@@ -322,10 +338,89 @@ export class VectorStoreSQLite {
   }
 
   /**
+   * Migrate to schema v4: Add passage-level location columns
+   * These columns enable click-to-source functionality by storing:
+   * - page_number: 1-based page number where the chunk appears
+   * - paragraph_index: 0-based paragraph index within the page
+   * - start_char/end_char: Character offsets in full text
+   * - bbox: Bounding box coordinates as JSON [l, t, r, b]
+   */
+  private async migrateToV4(): Promise<void> {
+    // Check current schema version
+    let currentVersion = 0;
+    try {
+      const versionResult = await Zotero.DB.valueQueryAsync(
+        `SELECT value FROM ${DB_NAME}.metadata WHERE key = 'schema_version'`
+      );
+      currentVersion = parseInt(versionResult, 10) || 0;
+    } catch (e) {
+      this.logger.debug(`Could not read schema version: ${e}`);
+    }
+
+    if (currentVersion >= 4) {
+      this.logger.debug('Schema already at v4 or higher, skipping migration');
+      return;
+    }
+
+    this.logger.info(`Migrating schema from v${currentVersion} to v4 (adding location columns)...`);
+
+    try {
+      // Check if columns already exist (in case of partial migration)
+      const tableInfo = await Zotero.DB.queryAsync(
+        `PRAGMA ${DB_NAME}.table_info(embeddings)`
+      );
+      const existingColumns = new Set(tableInfo?.map((col: any) => col.name) || []);
+
+      // Add location columns if they don't exist
+      const columnsToAdd = [
+        { name: 'page_number', type: 'INTEGER' },
+        { name: 'paragraph_index', type: 'INTEGER' },
+        { name: 'start_char', type: 'INTEGER' },
+        { name: 'end_char', type: 'INTEGER' },
+        { name: 'bbox', type: 'TEXT' },  // JSON: [l, t, r, b]
+      ];
+
+      for (const col of columnsToAdd) {
+        if (!existingColumns.has(col.name)) {
+          this.logger.debug(`Adding column: ${col.name}`);
+          await Zotero.DB.queryAsync(
+            `ALTER TABLE ${DB_NAME}.embeddings ADD COLUMN ${col.name} ${col.type}`
+          );
+        } else {
+          this.logger.debug(`Column ${col.name} already exists, skipping`);
+        }
+      }
+
+      // Create index on page_number for efficient location queries
+      await Zotero.DB.queryAsync(`
+        CREATE INDEX IF NOT EXISTS ${DB_NAME}.idx_page_number
+        ON embeddings(page_number)
+      `);
+
+      // Update schema version
+      await Zotero.DB.queryAsync(`
+        INSERT OR REPLACE INTO ${DB_NAME}.metadata (key, value) VALUES ('schema_version', '4')
+      `);
+
+      this.logger.info('Schema migration to v4 completed successfully');
+
+      // Log stats about existing data
+      const totalChunks = await Zotero.DB.valueQueryAsync(
+        `SELECT COUNT(*) FROM ${DB_NAME}.embeddings`
+      );
+      this.logger.info(`Existing chunks without location data: ${totalChunks}`);
+      this.logger.info('Re-index your library to populate location data for existing papers');
+    } catch (error: any) {
+      this.logger.error(`Migration to v4 failed: ${error?.message || error}`);
+      // Don't throw - existing functionality should still work
+    }
+  }
+
+  /**
    * Create database schema in the attached database
    */
   private async createTables(): Promise<void> {
-    // Main embeddings table with chunk support
+    // Main embeddings table with chunk support and location columns (v4)
     await Zotero.DB.queryAsync(`
       CREATE TABLE IF NOT EXISTS ${DB_NAME}.embeddings (
         item_id INTEGER NOT NULL,
@@ -340,6 +435,11 @@ export class VectorStoreSQLite {
         model_id TEXT NOT NULL,
         indexed_at TEXT NOT NULL,
         content_hash TEXT NOT NULL,
+        page_number INTEGER,
+        paragraph_index INTEGER,
+        start_char INTEGER,
+        end_char INTEGER,
+        bbox TEXT,
         PRIMARY KEY (item_id, chunk_index)
       )
     `);
@@ -370,6 +470,12 @@ export class VectorStoreSQLite {
     await Zotero.DB.queryAsync(`
       CREATE INDEX IF NOT EXISTS ${DB_NAME}.idx_content_hash
       ON embeddings(content_hash)
+    `);
+
+    // Index for page number lookups (passage-level location queries)
+    await Zotero.DB.queryAsync(`
+      CREATE INDEX IF NOT EXISTS ${DB_NAME}.idx_page_number
+      ON embeddings(page_number)
     `);
   }
 
@@ -430,8 +536,8 @@ export class VectorStoreSQLite {
 
     await Zotero.DB.queryAsync(`
       INSERT OR REPLACE INTO ${DB_NAME}.embeddings
-      (item_id, chunk_index, item_key, library_id, title, abstract, chunk_text, text_source, embedding, model_id, indexed_at, content_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (item_id, chunk_index, item_key, library_id, title, abstract, chunk_text, text_source, embedding, model_id, indexed_at, content_hash, page_number, paragraph_index, start_char, end_char, bbox)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       embedding.itemId,
       chunkIndex,
@@ -445,9 +551,14 @@ export class VectorStoreSQLite {
       embedding.modelId,
       embedding.indexedAt,
       embedding.contentHash,
+      embedding.pageNumber ?? null,
+      embedding.paragraphIndex ?? null,
+      embedding.startChar ?? null,
+      embedding.endChar ?? null,
+      embedding.bbox ?? null,
     ]);
 
-    this.logger.debug(`Stored embedding for item ${embedding.itemId} chunk ${chunkIndex}`);
+    this.logger.debug(`Stored embedding for item ${embedding.itemId} chunk ${chunkIndex}${embedding.pageNumber ? ` (p.${embedding.pageNumber})` : ''}`);
     this.invalidateCache();
   }
 
@@ -462,6 +573,12 @@ export class VectorStoreSQLite {
     const itemIds = [...new Set(embeddings.map(e => e.itemId))];
     this.logger.info(`Storing embeddings for ${itemIds.length} items: ${JSON.stringify(itemIds)}`);
 
+    // Count how many have location data
+    const withLocation = embeddings.filter(e => e.pageNumber != null).length;
+    if (withLocation > 0) {
+      this.logger.info(`${withLocation}/${embeddings.length} chunks have location data`);
+    }
+
     // Use Zotero's transaction for better performance
     await Zotero.DB.executeTransaction(async () => {
       for (const embedding of embeddings) {
@@ -470,8 +587,8 @@ export class VectorStoreSQLite {
 
         await Zotero.DB.queryAsync(`
           INSERT OR REPLACE INTO ${DB_NAME}.embeddings
-          (item_id, chunk_index, item_key, library_id, title, abstract, chunk_text, text_source, embedding, model_id, indexed_at, content_hash)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (item_id, chunk_index, item_key, library_id, title, abstract, chunk_text, text_source, embedding, model_id, indexed_at, content_hash, page_number, paragraph_index, start_char, end_char, bbox)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
           embedding.itemId,
           chunkIndex,
@@ -485,6 +602,11 @@ export class VectorStoreSQLite {
           embedding.modelId,
           embedding.indexedAt,
           embedding.contentHash,
+          embedding.pageNumber ?? null,
+          embedding.paragraphIndex ?? null,
+          embedding.startChar ?? null,
+          embedding.endChar ?? null,
+          embedding.bbox ?? null,
         ]);
       }
     });
@@ -575,7 +697,11 @@ export class VectorStoreSQLite {
 
     // Use parallel valueQueryAsync calls - most reliable method in Zotero 8
     try {
-      const [item_key, library_id, title, text_source, model_id, indexed_at, content_hash, abstract, chunk_text, embedding] = await Promise.all([
+      const [
+        item_key, library_id, title, text_source, model_id, indexed_at, content_hash,
+        abstract, chunk_text, embedding,
+        page_number, paragraph_index, start_char, end_char, bbox
+      ] = await Promise.all([
         Zotero.DB.valueQueryAsync(`SELECT item_key FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
         Zotero.DB.valueQueryAsync(`SELECT library_id FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
         Zotero.DB.valueQueryAsync(`SELECT title FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
@@ -586,6 +712,12 @@ export class VectorStoreSQLite {
         Zotero.DB.valueQueryAsync(`SELECT abstract FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
         Zotero.DB.valueQueryAsync(`SELECT chunk_text FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
         Zotero.DB.valueQueryAsync(`SELECT embedding FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
+        // Location columns (v4)
+        Zotero.DB.valueQueryAsync(`SELECT page_number FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
+        Zotero.DB.valueQueryAsync(`SELECT paragraph_index FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
+        Zotero.DB.valueQueryAsync(`SELECT start_char FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
+        Zotero.DB.valueQueryAsync(`SELECT end_char FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
+        Zotero.DB.valueQueryAsync(`SELECT bbox FROM ${DB_NAME}.embeddings WHERE item_id = ? AND chunk_index = ?`, [itemId, chunkIndex]),
       ]);
 
       // Check if row exists
@@ -606,6 +738,12 @@ export class VectorStoreSQLite {
         modelId: model_id || '',
         indexedAt: indexed_at || '',
         contentHash: content_hash || '',
+        // Location fields (v4)
+        pageNumber: page_number != null ? Number(page_number) : undefined,
+        paragraphIndex: paragraph_index != null ? Number(paragraph_index) : undefined,
+        startChar: start_char != null ? Number(start_char) : undefined,
+        endChar: end_char != null ? Number(end_char) : undefined,
+        bbox: bbox || undefined,
       };
     } catch (e) {
       this.logger.error(`getChunk(${itemId}, ${chunkIndex}): Failed: ${e}`);
@@ -622,8 +760,10 @@ export class VectorStoreSQLite {
     chunkIndex: number;
     itemKey: string;
     title: string;
-    textSource: 'abstract' | 'fulltext' | 'title_only';
+    textSource: TextSourceType;
     embedding: Float32Array;
+    pageNumber?: number;
+    paragraphIndex?: number;
   }>> {
     await this.ensureInit();
 
@@ -663,6 +803,8 @@ export class VectorStoreSQLite {
         title: e.title,
         textSource: e.textSource,
         embedding: float32Embedding,
+        pageNumber: e.pageNumber,
+        paragraphIndex: e.paragraphIndex,
       };
     });
 
@@ -739,8 +881,11 @@ export class VectorStoreSQLite {
       return [];
     }
 
-    // Step 3: Fetch other columns in parallel
-    const [itemKeys, libraryIds, titles, textSources, modelIds, indexedAts, contentHashes, abstracts, chunkTexts] = await Promise.all([
+    // Step 3: Fetch other columns in parallel (including location columns)
+    const [
+      itemKeys, libraryIds, titles, textSources, modelIds, indexedAts, contentHashes, abstracts, chunkTexts,
+      pageNumbers, paragraphIndexes, startChars, endChars, bboxes
+    ] = await Promise.all([
       Zotero.DB.columnQueryAsync(`SELECT item_key FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
       Zotero.DB.columnQueryAsync(`SELECT library_id FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
       Zotero.DB.columnQueryAsync(`SELECT title FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
@@ -750,6 +895,12 @@ export class VectorStoreSQLite {
       Zotero.DB.columnQueryAsync(`SELECT content_hash FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
       Zotero.DB.columnQueryAsync(`SELECT abstract FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
       Zotero.DB.columnQueryAsync(`SELECT chunk_text FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
+      // Location columns (v4)
+      Zotero.DB.columnQueryAsync(`SELECT page_number FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
+      Zotero.DB.columnQueryAsync(`SELECT paragraph_index FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
+      Zotero.DB.columnQueryAsync(`SELECT start_char FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
+      Zotero.DB.columnQueryAsync(`SELECT end_char FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
+      Zotero.DB.columnQueryAsync(`SELECT bbox FROM ${DB_NAME}.embeddings ORDER BY item_id, chunk_index`),
     ]);
 
     // Step 4: Assemble results
@@ -768,6 +919,12 @@ export class VectorStoreSQLite {
         modelId: modelIds?.[i] || '',
         indexedAt: indexedAts?.[i] || '',
         contentHash: contentHashes?.[i] || '',
+        // Location fields (v4)
+        pageNumber: pageNumbers?.[i] != null ? Number(pageNumbers[i]) : undefined,
+        paragraphIndex: paragraphIndexes?.[i] != null ? Number(paragraphIndexes[i]) : undefined,
+        startChar: startChars?.[i] != null ? Number(startChars[i]) : undefined,
+        endChar: endChars?.[i] != null ? Number(endChars[i]) : undefined,
+        bbox: bboxes?.[i] || undefined,
       });
     }
 
@@ -1129,6 +1286,12 @@ export class VectorStoreSQLite {
       modelId: row.model_id,
       indexedAt: row.indexed_at,
       contentHash: row.content_hash,
+      // Location fields (v4)
+      pageNumber: row.page_number != null ? Number(row.page_number) : undefined,
+      paragraphIndex: row.paragraph_index != null ? Number(row.paragraph_index) : undefined,
+      startChar: row.start_char != null ? Number(row.start_char) : undefined,
+      endChar: row.end_char != null ? Number(row.end_char) : undefined,
+      bbox: row.bbox || undefined,
     };
   }
 
@@ -1309,7 +1472,23 @@ export class VectorStoreSQLite {
     const storageUsedBytes = chunkCount * bytesPerEmbedding;
     const avgChunksPerPaper = itemCount > 0 ? chunkCount / itemCount : 0;
 
-    const stats = {
+    // Count chunks with location data (v4 feature)
+    let chunksWithLocation = 0;
+    try {
+      const locationResult = await Zotero.DB.valueQueryAsync(`
+        SELECT COUNT(*) FROM ${DB_NAME}.embeddings WHERE page_number IS NOT NULL
+      `);
+      chunksWithLocation = Number(locationResult) || 0;
+      this.logger.debug(`getStats(): Chunks with location = ${chunksWithLocation}`);
+    } catch (e) {
+      this.logger.error(`getStats(): Failed to count chunks with location: ${e}`);
+    }
+
+    const locationCoveragePercent = chunkCount > 0
+      ? Math.round((chunksWithLocation / chunkCount) * 100)
+      : 0;
+
+    const stats: VectorStoreStats = {
       totalPapers: 0,
       indexedPapers: itemCount,
       totalChunks: chunkCount,
@@ -1317,6 +1496,9 @@ export class VectorStoreSQLite {
       modelId,
       lastIndexed,
       storageUsedBytes,
+      // Location coverage (v4)
+      chunksWithLocation,
+      locationCoveragePercent,
     };
 
     this.logger.debug(`getStats(): Returning stats: ${JSON.stringify({...stats, lastIndexed: stats.lastIndexed?.toISOString()})}`);

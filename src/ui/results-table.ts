@@ -33,43 +33,50 @@ export interface ResultsTableOptions {
 }
 
 const DEFAULT_COLUMNS: ResultsTableColumn[] = [
-  { 
-    dataKey: 'indicator', 
+  {
+    dataKey: 'indicator',
     label: '',  // No header label for indicator
     staticWidth: true,
     width: 32,
     hidden: false,
   },
-  { 
-    dataKey: 'similarity', 
+  {
+    dataKey: 'similarity',
     label: 'Match',
     staticWidth: true,
     width: 70,
     hidden: false,
   },
-  { 
-    dataKey: 'title', 
+  {
+    dataKey: 'title',
     label: 'Title',
     fixedWidth: false,  // This column will flex
     hidden: false,
   },
-  { 
-    dataKey: 'authors', 
+  {
+    dataKey: 'authors',
     label: 'Authors',
     staticWidth: true,
     width: 180,
     hidden: false,
   },
-  { 
-    dataKey: 'year', 
+  {
+    dataKey: 'year',
     label: 'Year',
     staticWidth: true,
     width: 50,
     hidden: false,
   },
-  { 
-    dataKey: 'source', 
-    label: 'Source',
+  {
+    dataKey: 'page',
+    label: 'Location',
+    staticWidth: true,
+    width: 90,
+    hidden: false,
+  },
+  {
+    dataKey: 'source',
+    label: 'Section',
     staticWidth: true,
     width: 80,
     hidden: false,
@@ -81,9 +88,13 @@ export class SearchResultsTable {
   private tableHelper: InstanceType<typeof VirtualizedTableHelper> | null = null;
   private results: AnySearchResult[] = [];
   private enrichedResults: Map<number, any> = new Map();
+  private exactPages: Map<number, number> = new Map();  // itemId -> exact page number
   private options: ResultsTableOptions;
   private container: HTMLElement | null = null;
   private isHybridMode: boolean = false;  // Track if showing hybrid results
+
+  // Granularity mode: 'section' (aggregated) or 'location' (exact page/paragraph)
+  private granularity: 'section' | 'location' = 'section';
 
   constructor(options: ResultsTableOptions) {
     this.logger = new Logger('SearchResultsTable');
@@ -157,6 +168,11 @@ export class SearchResultsTable {
         // Handle column sorting
         this.logger.debug(`Column ${columnIndex} clicked for sorting`);
         // For now, just log - you can implement sorting logic later
+      })
+      .setProp('onItemContextMenu', (_event: Event, _x: number, _y: number, _index: number) => {
+        // Context menu handler - prevents TypeError when right-clicking
+        // Can be extended later to show item options
+        return false;  // Don't show default context menu
       })
       .setProp('storeColumnPrefs', (prefs: any) => {
         // Store column preferences (width, order, visibility)
@@ -239,6 +255,19 @@ export class SearchResultsTable {
     // Get source indicator for hybrid results
     const indicator = isHybrid ? HybridSearchEngine.getSourceIndicator(result as HybridSearchResult) : '';
     
+    // Get page and paragraph number from hybrid result
+    // Format depends on granularity mode:
+    // - 'section': Show "—" (location hidden for cleaner view)
+    // - 'location': Show "p. 8, ¶3" = page 8, paragraph 3 (1-based for display)
+    let formattedPage = '—';
+    if (this.granularity === 'location' && isHybrid) {
+      const hybridResult = result as HybridSearchResult;
+      if (hybridResult.pageNumber) {
+        const paraNum = (hybridResult.paragraphIndex ?? 0) + 1;  // Convert to 1-based
+        formattedPage = `p. ${hybridResult.pageNumber}, ¶${paraNum}`;
+      }
+    }
+
     // Create the row data object with EXACT column dataKey names
     const rowData: Record<string, any> = {
       indicator: indicator,
@@ -246,9 +275,10 @@ export class SearchResultsTable {
       title: title,
       authors: formattedAuthors,
       year: formattedYear,
+      page: formattedPage,
       source: formattedSource,
     };
-    
+
     return rowData;
   }
   
@@ -308,15 +338,16 @@ export class SearchResultsTable {
   async setResults(results: SearchResult[], enrichedData?: Map<number, any>): Promise<void> {
     this.results = results;
     this.enrichedResults = enrichedData || new Map();
+    this.exactPages.clear();  // Clear exact pages when results change
     this.isHybridMode = false;
-    
+
     if (this.tableHelper) {
       // Refresh the table to show new data
       await this.tableHelper.render();
       this.logger.debug(`Table updated with ${results.length} results`);
     }
   }
-  
+
   /**
    * Update the table with hybrid search results
    * HybridSearchResult already contains metadata, so no enrichment needed
@@ -324,13 +355,58 @@ export class SearchResultsTable {
   async setHybridResults(results: HybridSearchResult[]): Promise<void> {
     this.results = results;
     this.enrichedResults.clear();  // Not needed for hybrid results
+    this.exactPages.clear();  // Clear exact pages when results change
     this.isHybridMode = true;
-    
+
     if (this.tableHelper) {
       // Refresh the table to show new data
       await this.tableHelper.render();
       this.logger.debug(`Table updated with ${results.length} hybrid results`);
     }
+  }
+
+  /**
+   * Set exact page number for an item
+   */
+  setExactPage(itemId: number, pageNumber: number): void {
+    this.exactPages.set(itemId, pageNumber);
+  }
+
+  /**
+   * Update exact pages for multiple items and re-render
+   */
+  async updateExactPages(pages: Map<number, number>): Promise<void> {
+    for (const [itemId, page] of pages) {
+      this.exactPages.set(itemId, page);
+    }
+    if (this.tableHelper) {
+      await this.tableHelper.render();
+    }
+  }
+
+  /**
+   * Get item IDs of current results (for finding pages)
+   */
+  getResultItemIds(): number[] {
+    return this.results.map(r => r.itemId);
+  }
+
+  /**
+   * Get search text for an item (for finding exact page)
+   * Uses title as it's typically on page 1 and works well for verification
+   */
+  getSearchTextForItem(itemId: number): string | null {
+    const result = this.results.find(r => r.itemId === itemId);
+    if (!result) return null;
+    // Use title - it's typically on the first page of academic papers
+    return result.title || null;
+  }
+
+  /**
+   * Get exact page number for an item (if found via Find Pages)
+   */
+  getExactPage(itemId: number): number | undefined {
+    return this.exactPages.get(itemId);
   }
 
   /**
@@ -394,6 +470,7 @@ export class SearchResultsTable {
   async clear(): Promise<void> {
     this.results = [];
     this.enrichedResults.clear();
+    this.exactPages.clear();
     if (this.tableHelper) {
       await this.tableHelper.render();
     }
@@ -478,6 +555,22 @@ export class SearchResultsTable {
   }
 
   /**
+   * Set the granularity mode for result display
+   * @param granularity 'section' for aggregated view, 'location' for exact page/paragraph
+   */
+  setGranularity(granularity: 'section' | 'location'): void {
+    this.granularity = granularity;
+    this.logger.debug(`Granularity set to: ${granularity}`);
+  }
+
+  /**
+   * Get current granularity mode
+   */
+  getGranularity(): 'section' | 'location' {
+    return this.granularity;
+  }
+
+  /**
    * Select a specific item by index
    */
   selectIndex(index: number): void {
@@ -502,6 +595,7 @@ export class SearchResultsTable {
     this.tableHelper = null;
     this.results = [];
     this.enrichedResults.clear();
+    this.exactPages.clear();
     this.container = null;
     this.logger.debug('Results table destroyed');
   }
