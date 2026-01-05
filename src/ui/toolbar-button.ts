@@ -264,6 +264,112 @@ export class ToolbarButton {
     }
   }
 
+  // ============================================
+  // Reader Text Selection Context Menu
+  // ============================================
+
+  /**
+   * Register context menu item for text selection in PDF reader
+   * When user selects text and right-clicks, shows "Find Related Papers" option
+   *
+   * Based on: https://groups.google.com/g/zotero-dev/c/5fgn8bC_Z1U
+   * Uses createViewContextMenu event to add menu items to text selection context menu
+   */
+  public async registerReaderContextMenu(): Promise<void> {
+    try {
+      Zotero.Reader.registerEventListener(
+        'createViewContextMenu',
+        (event: any) => this.readerContextMenuCallback(event),
+        PLUGIN_ID
+      );
+
+      this.logger.info('Reader context menu registered');
+    } catch (error) {
+      this.logger.error('Failed to register reader context menu:', error);
+    }
+  }
+
+  /**
+   * Callback for reader view context menu (text selection)
+   * Adds "Find Related Papers" option when text is selected
+   */
+  private readerContextMenuCallback(event: any): void {
+    const { append, reader } = event;
+
+    // Access selected text via internal reader API
+    // Path discovered via zotero-dev discussion - may change in future versions
+    // Zotero team considering adding event.params.selectedText officially
+    const selectionRanges = reader._iframeWindow?.wrappedJSObject
+      ?._reader?._primaryView?._selectionRanges;
+
+    // Only show menu if text is selected
+    if (!selectionRanges || selectionRanges.length === 0) {
+      return;
+    }
+
+    // Extract text from selection ranges
+    const selectedText = this.extractTextFromRanges(selectionRanges);
+
+    // Skip if selection is too short (less than 3 chars)
+    if (!selectedText || selectedText.trim().length < 3) {
+      return;
+    }
+
+    // Get the current item ID to exclude from results
+    // reader._item is the attachment (PDF), we want the parent item
+    const currentItemId = this.getReaderItemId(reader);
+
+    // Add the context menu item
+    append({
+      label: 'Find Related Documents',
+      onCommand: () => {
+        this.logger.info(`Context menu: searching for "${selectedText.substring(0, 50)}..." (excluding item ${currentItemId})`);
+        searchDialogWithVTable.open(selectedText.trim(), currentItemId);
+      }
+    });
+  }
+
+  /**
+   * Get the parent item ID from a reader instance
+   * The reader shows an attachment (PDF), but we want the parent item (the paper)
+   */
+  private getReaderItemId(reader: any): number | undefined {
+    try {
+      const attachment = reader._item;
+      if (!attachment) return undefined;
+
+      // Get the parent item (the actual paper/article)
+      if (attachment.parentItem) {
+        return attachment.parentItem.id;
+      } else if (attachment.parentItemID) {
+        return attachment.parentItemID;
+      }
+
+      // If no parent, return the attachment's own ID
+      return attachment.id;
+    } catch (error) {
+      this.logger.warn('Failed to get reader item ID:', error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Extract plain text from PDF selection ranges
+   * Selection ranges are objects containing text content from the PDF viewer
+   */
+  private extractTextFromRanges(ranges: any[]): string {
+    try {
+      // Each range object should have a text property
+      return ranges
+        .map(r => r.text || '')
+        .join(' ')
+        .trim();
+    } catch (error) {
+      this.logger.warn('Failed to extract text from selection ranges:', error);
+      return '';
+    }
+  }
+
   /**
    * Callback for reader toolbar render event
    */

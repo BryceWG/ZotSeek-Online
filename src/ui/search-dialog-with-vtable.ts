@@ -25,12 +25,28 @@ export class ZotSeekDialogWithVTable {
 
   /**
    * Open the semantic search dialog with VirtualizedTable
+   * @param initialQuery - Optional query to pre-fill and auto-search (e.g., from PDF text selection)
+   * @param excludeItemId - Optional item ID to exclude from results (e.g., the paper being read)
    */
-  public open(): void {
+  public open(initialQuery?: string, excludeItemId?: number): void {
     try {
       if (this.isWindowOpen()) {
         // Bring existing window to front
         this.window.focus();
+
+        // If we have an initial query and window is already open, set it and search
+        if (initialQuery) {
+          const queryInput = this.window.document?.getElementById('zotseek-query') as HTMLInputElement;
+          if (queryInput) {
+            queryInput.value = initialQuery;
+            // Set the exclude item ID if provided
+            if (excludeItemId !== undefined) {
+              (this.window as any).searchDialogVTable?.setExcludeItemId?.(excludeItemId);
+            }
+            // Trigger search via the dialog's exposed method
+            (this.window as any).searchDialogVTable?.performSearch?.();
+          }
+        }
         return;
       }
 
@@ -41,14 +57,18 @@ export class ZotSeekDialogWithVTable {
       }
 
       // Open dialog window with VirtualizedTable version
+      // Pass initialQuery and excludeItemId as window arguments
       this.window = Z.getMainWindow().openDialog(
         'chrome://zotseek/content/searchDialogVTable.xhtml',
         'zotseek-dialog-vtable',
         'chrome,centerscreen,resizable,dialog=no',
-        {}
+        {
+          initialQuery: initialQuery || '',
+          excludeItemId: excludeItemId
+        }
       );
 
-      this.logger.info('Search dialog with VirtualizedTable opened');
+      this.logger.info(`Search dialog opened${initialQuery ? ' with initial query' : ''}${excludeItemId ? ` (excluding item ${excludeItemId})` : ''}`);
     } catch (error) {
       this.logger.error('Failed to open search dialog:', error);
       this.showError('Failed to open search dialog');

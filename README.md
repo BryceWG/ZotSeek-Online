@@ -13,6 +13,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - 🔒 **100% Local** - No data sent to cloud, works completely offline
 - 🧠 **True Semantic Search** - Find papers by meaning, not just keywords
 - 🔍 **Find Similar Documents** - Right-click any paper → discover related research
+- 📖 **Search from PDF Selection** - Select text while reading → right-click → find documents about that concept
 - 🔎 **Natural Language Search** - Search with queries like "machine learning in healthcare"
 - 🔗 **Hybrid Search** - Combines AI + keyword search for best results
 - ⚡ **Lightning Fast** - Searches complete in <100ms
@@ -373,6 +374,21 @@ Install via: Zotero → Tools → Add-ons → Install Add-on From File
 1. Select any paper in your library
 2. Right-click → **"Find Similar Documents"**
 3. Results appear showing similarity percentages
+
+### Search from PDF Selection
+
+While reading a PDF, you can search for related documents based on selected text:
+
+1. Open a PDF in Zotero's reader
+2. Select a passage that describes a concept you want to explore
+3. Right-click → **"Find Related Documents"**
+4. ZotSeek opens with the selected text as the search query
+5. Results show documents related to that concept (current document is excluded)
+
+This is useful for:
+- Exploring unfamiliar concepts while reading
+- Finding additional sources on a specific topic
+- Discovering related work mentioned in a paper
 
 ### ZotSeek Search Dialog
 

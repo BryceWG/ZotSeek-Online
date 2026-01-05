@@ -43,6 +43,9 @@ export class ZotSeekDialogVTable {
   // Indexing mode: 'abstract' or 'full' - affects whether granularity toggle is shown
   private indexingMode: 'abstract' | 'full' = 'abstract';
 
+  // Item ID to exclude from results (e.g., the paper being read when using "Find Related Papers")
+  private excludeItemId: number | undefined = undefined;
+
   constructor() {
     this.logger = new Logger('ZotSeekDialogVTable');
     this.zoteroAPI = new ZoteroAPI();
@@ -231,16 +234,40 @@ export class ZotSeekDialogVTable {
         });
       }
 
-      // Expose setSearchMode globally for XUL command attribute
+      // Expose dialog methods globally for XUL command attribute and external callers
       (win as any).searchDialogVTable = {
         setSearchMode: (mode: SearchMode) => this.setSearchMode(mode),
         getSearchMode: () => this.getSearchMode(),
         setGranularity: (g: 'section' | 'location') => this.setGranularity(g),
         getGranularity: () => this.granularity,
+        performSearch: () => this.performSearch(),  // For triggering search from opener
+        setExcludeItemId: (id: number | undefined) => { this.excludeItemId = id; },  // For excluding current paper
       };
 
       // Focus the input
       queryInput?.focus();
+
+      // Check for initial query and exclude item from window arguments (e.g., from PDF text selection)
+      const windowArgs = (win as any).arguments?.[0];
+      const initialQuery = windowArgs?.initialQuery;
+      const excludeItemId = windowArgs?.excludeItemId;
+
+      // Set exclude item ID if provided (to filter out the paper being read)
+      if (excludeItemId !== undefined) {
+        this.excludeItemId = excludeItemId;
+        this.logger.info(`Will exclude item ${excludeItemId} from search results`);
+      }
+
+      if (initialQuery && queryInput) {
+        queryInput.value = initialQuery;
+        const truncated = initialQuery.length > 50 ? initialQuery.substring(0, 50) + '...' : initialQuery;
+        this.logger.info(`Pre-filling query from PDF selection: "${truncated}"`);
+
+        // Trigger search after a brief delay to let UI settle
+        win.setTimeout(() => {
+          this.performSearch();
+        }, 150);
+      }
 
       this.logger.info(`Search dialog initialized (mode: ${this.searchMode})`);
     } catch (error) {
@@ -316,6 +343,15 @@ export class ZotSeekDialogVTable {
           mode: this.searchMode,
           returnAllChunks,
         });
+      }
+
+      // Filter out excluded item (e.g., the paper being read when using "Find Related Papers")
+      if (this.excludeItemId !== undefined) {
+        const beforeCount = this.rawResults.length;
+        this.rawResults = this.rawResults.filter(r => r.itemId !== this.excludeItemId);
+        if (beforeCount !== this.rawResults.length) {
+          this.logger.debug(`Filtered out current paper (item ${this.excludeItemId}) from results`);
+        }
       }
 
       // In location mode, rawResults already has all chunks; in section mode, it's already aggregated
@@ -671,6 +707,7 @@ export class ZotSeekDialogVTable {
     this.enrichedData.clear();
     this.window = null;
     this.lastQuery = '';
+    this.excludeItemId = undefined;  // Reset excluded item
     this.logger.info('Search dialog cleaned up');
   }
 }

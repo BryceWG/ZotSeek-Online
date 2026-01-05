@@ -5,6 +5,11 @@ All notable changes to ZotSeek - Semantic Search for Zotero will be documented i
 ## [1.3.0] - Unreleased (Draft)
 
 ### Added
+- **Search from PDF Selection** - Select text in PDF and right-click to find related documents
+  - Appears in context menu when text is selected: "Find Related Documents"
+  - Opens ZotSeek search dialog pre-filled with selected passage
+  - Automatically excludes the current document from search results
+  - Great for exploring concepts while reading
 - **GPU Acceleration (Experimental)** - Automatic WebGPU detection for faster indexing
   - Up to 10-20x faster embeddings when WebGPU is available
   - Automatic fallback to CPU (WASM) when WebGPU is not supported
@@ -12,6 +17,8 @@ All notable changes to ZotSeek - Semantic Search for Zotero will be documented i
   - Note: Waiting for Zotero/Firefox to enable WebGPU (Firefox 141+ on Windows, macOS/Linux coming)
 
 ### Technical
+- Added `createViewContextMenu` event listener for PDF reader text selection
+- Search dialog now accepts `initialQuery` and `excludeItemId` parameters
 - Added WebGPU detection with automatic fallback to WASM in embedding worker
 
 ---
