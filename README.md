@@ -460,12 +460,33 @@ The plugin includes several performance optimizations:
 4. **Parallel Searches** - Semantic and keyword searches run simultaneously
 5. **Reliable SQLite Methods** - Uses `columnQueryAsync()` and `valueQueryAsync()`
 
+### GPU Acceleration (Experimental)
+
+ZotSeek automatically detects and uses **WebGPU** for GPU-accelerated embeddings when available:
+
+| Backend | When Used | Speed |
+|---------|-----------|-------|
+| **WebGPU (GPU)** | If browser/Zotero supports WebGPU | Up to 10-20x faster |
+| **WASM (CPU)** | Fallback when WebGPU unavailable | ~3 seconds per chunk |
+
+**Current status (January 2026):**
+- Firefox 141 shipped WebGPU on **Windows only** (July 2025)
+- **macOS and Linux** WebGPU support coming in future Firefox versions
+- Zotero 8 is based on Firefox 140 ESR (one version before WebGPU)
+
+**When will GPU work?** Once Zotero upgrades to a Firefox ESR with WebGPU support for your platform, GPU acceleration will automatically activate — no plugin update needed.
+
+**Check if GPU is being used:** Look for "Model loaded on GPU" or "Model loaded on CPU" in Zotero's debug console (Help → Debug Output Logging → View Output).
+
+Note: If WebGPU is unavailable or fails, the plugin automatically falls back to CPU without interruption.
+
 ---
 
 ## Limitations
 
 - **English only** - Model is trained on English text
 - **Large plugin size** - ~131MB due to bundled AI model
+- **CPU only (for now)** - GPU acceleration ready but waiting for Zotero/Firefox WebGPU support
 
 ---
 

@@ -21,6 +21,10 @@ if (typeof navigator === 'undefined') {
   };
 }
 
+// Detect WebGPU availability for GPU acceleration
+const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator;
+let useWebGPU = false; // Will be set after actual GPU adapter check
+
 // Import Transformers.js v3
 import { pipeline, env } from '@huggingface/transformers';
 
@@ -48,6 +52,7 @@ postMessage({
   data: {
     wasmPaths: env.backends.onnx.wasm.wasmPaths,
     localModelPath: env.localModelPath,
+    webGPUDetected: hasWebGPU,
   }
 });
 
@@ -81,7 +86,52 @@ const PREFIX_DOCUMENT = 'search_document: ';
 const PREFIX_QUERY = 'search_query: ';
 
 /**
+ * Check if WebGPU is actually available and working
+ */
+async function checkWebGPUAvailability(): Promise<boolean> {
+  if (!hasWebGPU) return false;
+
+  try {
+    const gpu = (navigator as any).gpu;
+    if (!gpu) return false;
+
+    const adapter = await gpu.requestAdapter();
+    if (!adapter) {
+      postMessage({
+        type: 'log',
+        level: 'info',
+        message: 'WebGPU: No adapter available',
+      });
+      return false;
+    }
+
+    const adapterInfo = await adapter.requestAdapterInfo?.() || {};
+    postMessage({
+      type: 'log',
+      level: 'info',
+      message: 'WebGPU adapter found',
+      data: {
+        vendor: adapterInfo.vendor || 'unknown',
+        architecture: adapterInfo.architecture || 'unknown',
+        device: adapterInfo.device || 'unknown',
+      }
+    });
+
+    return true;
+  } catch (error: any) {
+    postMessage({
+      type: 'log',
+      level: 'info',
+      message: 'WebGPU check failed',
+      data: { error: error.message || String(error) }
+    });
+    return false;
+  }
+}
+
+/**
  * Initialize the embedding pipeline
+ * Tries WebGPU first for GPU acceleration, falls back to WASM (CPU)
  */
 async function initPipeline(): Promise<void> {
   if (embeddingPipeline || isLoading) return;
@@ -89,15 +139,53 @@ async function initPipeline(): Promise<void> {
   isLoading = true;
   const startTime = Date.now();
 
+  // Check WebGPU availability
+  useWebGPU = await checkWebGPUAvailability();
+
+  const deviceType = useWebGPU ? 'webgpu' : 'wasm';
+  const deviceLabel = useWebGPU ? 'GPU (WebGPU)' : 'CPU (WASM)';
+
   postMessage({
     type: 'log',
     level: 'info',
-    message: 'Loading embedding model',
-    data: { modelId: MODEL_ID }
+    message: `Loading embedding model on ${deviceLabel}`,
+    data: { modelId: MODEL_ID, device: deviceType }
   });
 
-  postMessage({ type: 'status', status: 'loading', message: `Loading model ${MODEL_ID}...` });
+  postMessage({ type: 'status', status: 'loading', message: `Loading model on ${deviceLabel}...` });
 
+  // Try WebGPU first, fall back to WASM if it fails
+  if (useWebGPU) {
+    try {
+      embeddingPipeline = await pipeline('feature-extraction', MODEL_ID, {
+        ...MODEL_OPTIONS,
+        device: 'webgpu',
+      });
+
+      const loadTime = Date.now() - startTime;
+      postMessage({
+        type: 'log',
+        level: 'info',
+        message: `Model loaded on GPU in ${loadTime}ms`,
+        data: { modelId: MODEL_ID, loadTimeMs: loadTime, device: 'webgpu' }
+      });
+
+      postMessage({ type: 'status', status: 'ready', message: `Model loaded on GPU (${loadTime}ms)` });
+      isLoading = false;
+      return;
+    } catch (error: any) {
+      postMessage({
+        type: 'log',
+        level: 'warn',
+        message: 'WebGPU failed, falling back to CPU',
+        data: { error: error.message || String(error) }
+      });
+      useWebGPU = false;
+      // Continue to WASM fallback
+    }
+  }
+
+  // WASM (CPU) fallback
   try {
     embeddingPipeline = await pipeline('feature-extraction', MODEL_ID, MODEL_OPTIONS);
 
@@ -105,24 +193,24 @@ async function initPipeline(): Promise<void> {
     postMessage({
       type: 'log',
       level: 'info',
-      message: `Model loaded in ${loadTime}ms`,
-      data: { modelId: MODEL_ID, loadTimeMs: loadTime }
+      message: `Model loaded on CPU in ${loadTime}ms`,
+      data: { modelId: MODEL_ID, loadTimeMs: loadTime, device: 'wasm' }
     });
 
-    postMessage({ type: 'status', status: 'ready', message: `Model loaded (${loadTime}ms)` });
+    postMessage({ type: 'status', status: 'ready', message: `Model loaded on CPU (${loadTime}ms)` });
   } catch (error: any) {
     const loadTime = Date.now() - startTime;
-    
+
     postMessage({
       type: 'log',
       level: 'error',
       message: `Failed to load model after ${loadTime}ms`,
-      data: { 
+      data: {
         error: error.message || String(error),
         stack: error.stack,
       }
     });
-    
+
     postMessage({ type: 'error', error: `Failed to load model: ${error.message}` });
   } finally {
     isLoading = false;
@@ -235,6 +323,6 @@ postMessage({
   type: 'log',
   level: 'info',
   message: 'Embedding worker initialized',
-  data: { modelId: MODEL_ID, maxChars: MAX_CHARS }
+  data: { modelId: MODEL_ID, maxChars: MAX_CHARS, webGPUAvailable: hasWebGPU }
 });
-postMessage({ type: 'status', status: 'initialized', message: 'Worker script loaded' });
+postMessage({ type: 'status', status: 'initialized', message: `Worker loaded (WebGPU ${hasWebGPU ? 'detected' : 'not available'})` });

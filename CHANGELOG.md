@@ -2,6 +2,20 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [1.3.0] - Unreleased (Draft)
+
+### Added
+- **GPU Acceleration (Experimental)** - Automatic WebGPU detection for faster indexing
+  - Up to 10-20x faster embeddings when WebGPU is available
+  - Automatic fallback to CPU (WASM) when WebGPU is not supported
+  - Check debug console for "Model loaded on GPU" or "Model loaded on CPU"
+  - Note: Waiting for Zotero/Firefox to enable WebGPU (Firefox 141+ on Windows, macOS/Linux coming)
+
+### Technical
+- Added WebGPU detection with automatic fallback to WASM in embedding worker
+
+---
+
 ## [1.2.0] - 2026-01-05
 
 ### Added
