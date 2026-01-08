@@ -66,10 +66,10 @@
       <label id="zotseek-status-text" value="" style="color: #666;"/>
     </hbox>
 
-    <!-- Results Table Container -->
-    <hbox class="virtualized-table-container" flex="1" height="400">
+    <!-- Results Table Container - vbox provides XUL flex, CSS handles sizing/scrolling -->
+    <vbox class="virtualized-table-container" flex="1" style="min-height: 150px;">
       <html:div id="zotseek-results-container" />
-    </hbox>
+    </vbox>
 
     <separator class="thin"/>
 

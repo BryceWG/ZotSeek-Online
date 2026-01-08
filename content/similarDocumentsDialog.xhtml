@@ -35,10 +35,10 @@
 
     <separator class="thin"/>
 
-    <!-- Results Table Container -->
-    <hbox class="virtualized-table-container" flex="1" height="450">
+    <!-- Results Table Container - vbox provides XUL flex, CSS handles sizing/scrolling -->
+    <vbox class="virtualized-table-container" flex="1" style="min-height: 150px;">
       <html:div id="similar-documents-results-container" />
-    </hbox>
+    </vbox>
 
     <separator class="thin"/>
 

@@ -2,7 +2,7 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
-## [1.3.0] - Unreleased (Draft)
+## [1.3.0] - 2026-01-08
 
 ### Added
 - **Search from PDF Selection** - Select text in PDF and right-click to find related documents
@@ -16,10 +16,16 @@ All notable changes to ZotSeek - Semantic Search for Zotero will be documented i
   - Check debug console for "Model loaded on GPU" or "Model loaded on CPU"
   - Note: Waiting for Zotero/Firefox to enable WebGPU (Firefox 141+ on Windows, macOS/Linux coming)
 
+### Fixed
+- **Scrolling on Windows** - Fixed VirtualizedTable scrolling in search dialogs on Windows
+  - Results list now scrolls properly when content exceeds visible area
+  - Affects both main ZotSeek search and "Find Similar Documents" dialogs
+
 ### Technical
 - Added `createViewContextMenu` event listener for PDF reader text selection
 - Search dialog now accepts `initialQuery` and `excludeItemId` parameters
 - Added WebGPU detection with automatic fallback to WASM in embedding worker
+- Used absolute positioning for bounded height in XUL windows (fixes CSS flex issues)
 
 ---
 
