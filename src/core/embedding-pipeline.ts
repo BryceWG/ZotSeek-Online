@@ -125,14 +125,31 @@ export class EmbeddingPipeline {
           }
         };
 
-        this.worker.onerror = (error: any) => {
-          this.logger.error('Worker error:', error);
+        this.worker.onerror = (event: any) => {
+          // Extract detailed error info from ErrorEvent
+          const errorInfo = {
+            message: event.message || 'Unknown error',
+            filename: event.filename || 'unknown',
+            lineno: event.lineno || 0,
+            colno: event.colno || 0,
+            error: event.error?.toString() || event.error?.message || 'No error details',
+          };
+          this.logger.error(`Worker error: ${errorInfo.message} at ${errorInfo.filename}:${errorInfo.lineno}:${errorInfo.colno}`);
+          this.logger.error(`Error details: ${errorInfo.error}`);
           clearTimeout(timeout);
-          reject(error);
+          reject(new Error(`Worker failed: ${errorInfo.message}`));
         };
 
-        // Initialize the worker
-        this.worker.postMessage({ type: 'init' });
+        // Initialize the worker with Zotero version info
+        // ChromeWorker doesn't have access to full userAgent, so pass version from main thread
+        // Zotero.platformMajorVersion = Firefox version (102 for Zotero 7, 128+ for Zotero 8)
+        const zoteroMajorVersion = typeof Zotero !== 'undefined' ? parseInt(Zotero.version?.split('.')[0], 10) || 0 : 0;
+        const platformMajorVersion = typeof Zotero !== 'undefined' ? Zotero.platformMajorVersion || 0 : 0;
+        this.logger.info(`Zotero version: ${zoteroMajorVersion}, Platform (Firefox): ${platformMajorVersion}`);
+        this.worker.postMessage({
+          type: 'init',
+          data: { zoteroMajorVersion, platformMajorVersion }
+        });
 
       } catch (error) {
         this.logger.error('Failed to create ChromeWorker:', error);

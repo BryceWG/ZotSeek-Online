@@ -105,6 +105,14 @@
     Smaller chunks (~800 tokens) enable precise page-level search.
     A 50-page paper typically needs ~50-100 chunks for full coverage.
   </html:p>
+
+  <vbox id="zotseek-perf-warning" style="display: none; margin-top: 4px; padding: 8px; background: #fff8e1; border: 1px solid #ffcc80; border-radius: 4px;">
+    <html:p style="margin: 0; font-size: 11px; color: #e65100;">
+      <html:b>⚠️ Zotero 7 Performance Note:</html:b> Full Document indexing is significantly slower
+      on Zotero 7 (Firefox 115) compared to Zotero 8 (Firefox 140+) due to WASM performance differences.
+      For best results on Zotero 7, keep Max Tokens ≤1000 or use Abstract mode.
+    </html:p>
+  </vbox>
 </groupbox>
 
 <!-- Search Settings -->

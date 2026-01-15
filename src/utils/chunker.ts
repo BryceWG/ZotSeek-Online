@@ -514,11 +514,12 @@ export function chunkDocument(
 
 /**
  * Get chunk options from Zotero preferences
+ * Note: Zotero 7 (Firefox < 128) has slower WASM performance - users are warned in preferences UI
  */
 export function getChunkOptionsFromPrefs(Zotero: any): ChunkOptions {
   const maxTokens = Zotero?.Prefs?.get('zotseek.maxTokens', true);
   const maxChunks = Zotero?.Prefs?.get('zotseek.maxChunksPerPaper', true);
-  
+
   return {
     maxTokens: typeof maxTokens === 'number' ? maxTokens : DEFAULT_OPTIONS.maxTokens,
     maxChunks: typeof maxChunks === 'number' ? maxChunks : DEFAULT_OPTIONS.maxChunks,

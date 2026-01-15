@@ -2,7 +2,7 @@
 
 Find similar papers by **meaning**, not just keywords. 100% local, no data leaves your machine.
 
-> **Status:** ✅ Stable release with Transformers.js running locally in Zotero 8
+> **Status:** ✅ Stable release with Transformers.js running locally in Zotero 7 & 8
 
 ![ZotSeek Search Dialog](docs/images/search-dialog-by-section.png)
 
@@ -54,6 +54,9 @@ ZotSeek is designed with privacy as a core principle:
 
 ### Context Menu
 ![Context Menu](docs/images/context-menu.png)
+
+### PDF Selection Context Menu
+![PDF Find Related](docs/images/context-menu-pdf-find-similar.png)
 
 ### Settings Panel
 ![Settings Panel](docs/images/settings.png)
@@ -503,6 +506,7 @@ Note: If WebGPU is unavailable or fails, the plugin automatically falls back to 
 - **English only** - Model is trained on English text
 - **Large plugin size** - ~131MB due to bundled AI model
 - **CPU only (for now)** - GPU acceleration ready but waiting for Zotero/Firefox WebGPU support
+- **Zotero 7 slower for Full Document mode** - Firefox 115 (Zotero 7) has slower WASM performance than Firefox 140 (Zotero 8). Full Document indexing is ~8-10x slower on Zotero 7. **Recommendation:** Use Abstract mode for faster indexing on Zotero 7, or upgrade to Zotero 8 for best performance.
 
 ---
 

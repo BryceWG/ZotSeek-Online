@@ -2,6 +2,43 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [1.4.0] - 2026-01-15
+
+### Added
+- **Zotero 7 Support** - Now compatible with both Zotero 7 (stable) and Zotero 8 (beta)
+  - Extended `strict_min_version` from `7.999` to `6.999`
+  - Same feature set across both versions
+- **Full Paper Mode Default** - Full Document indexing is now the default for better search quality
+- **Version-Aware Performance Warning** - Preferences panel shows performance note only on Zotero 7
+  - Warns about slower WASM performance on Firefox 115
+  - Hidden on Zotero 8 where performance is optimal
+
+### Changed
+- **Version-Aware Defaults** - Chunk size defaults optimized per Zotero version
+  - Zotero 7: 800 tokens per chunk (faster on slower WASM)
+  - Zotero 8: 2000 tokens per chunk (full speed)
+
+### Known Issues
+- **Zotero 7 Full Document Indexing is ~8-10x Slower** - Firefox 115 (Zotero 7) has significantly slower WASM SIMD performance than Firefox 140 (Zotero 8)
+  - Abstract mode works at normal speed on both versions
+  - Full Document mode on Zotero 7: ~6 seconds per chunk vs ~0.5 seconds on Zotero 8
+  - Worker automatically limits chunks to 3000 chars on Zotero 7
+  - **Recommendation:** Use Abstract mode on Zotero 7 for faster indexing, or upgrade to Zotero 8
+
+### Technical
+- **Automated Release Script** - New `npm run release` workflow
+  - Interactive version bumping via bumpp
+  - Auto-generates `update.json` from `package.json` version
+  - Builds and packages XPI in one command
+- **Version Sync** - `package.json` is now the source of truth for version
+  - `manifest.json` and `update.json` are synced automatically
+- **Zotero Version Detection** - Detects Firefox version via `Zotero.platformMajorVersion`
+  - Passed to ChromeWorker for chunk size optimization
+  - Used in preferences UI for conditional warning display
+- **Improved Worker Error Handling** - Better error messages from ChromeWorker failures
+
+---
+
 ## [1.3.0] - 2026-01-08
 
 ### Added
