@@ -19,6 +19,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - ⚡ **Lightning Fast** - Searches complete in <100ms
 - 📑 **Section-Aware** - See which section matched (Abstract, Methods, Results)
 - 📍 **Passage-Level Location** - Jump to exact page & paragraph in Full Document mode
+- 🔄 **Auto-Index** - Automatically index new papers when you add them to your library
 - ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek
 
 ---
@@ -393,6 +394,21 @@ This is useful for:
 - Finding additional sources on a specific topic
 - Discovering related work mentioned in a paper
 
+### Auto-Index New Papers
+
+ZotSeek can automatically index papers as you add them to your library:
+
+1. Go to **Zotero → Settings → ZotSeek**
+2. Enable **"Auto-index new items"**
+3. Now when you add papers (via browser connector, drag & drop, etc.), they'll be indexed automatically
+
+**How it works:**
+- Detects when new items are added to your library
+- Waits for PDF attachments to arrive (with automatic retry)
+- Batches multiple items together (5 second delay)
+- Shows a brief progress indicator while indexing
+- Respects your indexing mode setting (Abstract or Full Document)
+
 ### ZotSeek Search Dialog
 
 1. Click the **ZotSeek button** in the toolbar (🔍✨)
@@ -430,7 +446,7 @@ Preferences are stored in Zotero's preferences system:
 |------------|---------|-------------|
 | `zotseek.minSimilarityPercent` | `30` | Minimum similarity % to show in results |
 | `zotseek.topK` | `20` | Maximum number of results |
-| `zotseek.autoIndex` | `false` | Auto-index new papers (not implemented yet) |
+| `zotseek.autoIndex` | `false` | Automatically index new papers when added |
 
 **Indexing Settings:**
 

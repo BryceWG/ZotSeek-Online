@@ -4,6 +4,7 @@
  */
 
 import { getZotero } from '../utils/zotero-helper';
+import { autoIndexManager } from '../core/auto-index-manager';
 
 class PreferencesManager {
   private window: Window | null = null;
@@ -80,6 +81,7 @@ class PreferencesManager {
       topK: Z.Prefs.get('zotseek.topK', true) ?? 20,
       minSimilarity: Z.Prefs.get('zotseek.minSimilarityPercent', true) ?? 30,
       excludeBooks: Z.Prefs.get('zotseek.excludeBooks', true) ?? true,
+      autoIndex: Z.Prefs.get('zotseek.autoIndex', true) ?? false,
     };
 
     this.logger.debug(`Loaded preferences: ${JSON.stringify(prefs)}`);
@@ -95,6 +97,7 @@ class PreferencesManager {
 
     // Set checkbox values
     this.setCheckboxValue('zotseek-pref-excludeBooks', prefs.excludeBooks);
+    this.setCheckboxValue('zotseek-pref-autoIndex', prefs.autoIndex);
   }
 
   /**
@@ -148,6 +151,17 @@ class PreferencesManager {
         const checked = excludeBooksCheckbox.checked;
         Z.Prefs.set('zotseek.excludeBooks', checked, true);
         this.logger.info(`Exclude books changed to: ${checked}`);
+      });
+    }
+
+    const autoIndexCheckbox = doc.getElementById('zotseek-pref-autoIndex') as any;
+    if (autoIndexCheckbox) {
+      autoIndexCheckbox.addEventListener('command', () => {
+        const checked = autoIndexCheckbox.checked;
+        Z.Prefs.set('zotseek.autoIndex', checked, true);
+        this.logger.info(`Auto-index changed to: ${checked}`);
+        // Reload auto-index manager to apply new setting
+        autoIndexManager.reload();
       });
     }
 

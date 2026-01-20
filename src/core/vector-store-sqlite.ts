@@ -1303,12 +1303,15 @@ export class VectorStoreSQLite {
     await this.ensureInit();
 
     try {
-      // valueQueryAsync is most reliable for existence checks
+      // valueQueryAsync returns the value or false/undefined if no rows
       const result = await Zotero.DB.valueQueryAsync(
         `SELECT 1 FROM ${DB_NAME}.embeddings WHERE item_id = ? LIMIT 1`,
         [itemId]
       );
-      return result !== null && result !== undefined;
+      // Must check for exact value 1, as valueQueryAsync can return false/undefined when no rows
+      const isIndexed = result === 1;
+      this.logger.debug(`isIndexed(${itemId}): result=${result}, type=${typeof result}, returning=${isIndexed}`);
+      return isIndexed;
     } catch (e) {
       this.logger.error(`isIndexed(${itemId}): Failed: ${e}`);
       return false;

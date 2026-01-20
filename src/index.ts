@@ -19,6 +19,7 @@ import { textExtractor, ExtractedText, ExtractedChunks } from './core/text-extra
 import { ZoteroAPI } from './utils/zotero-api';
 import { getIndexingMode } from './utils/chunker';
 import { getZotero } from './utils/zotero-helper';
+import { autoIndexManager } from './core/auto-index-manager';
 // Use stable progress window from toolkit to avoid crashes
 import { StableProgressWindow } from './utils/stable-progress';
 // UI components
@@ -197,7 +198,29 @@ class ZotSeekPlugin {
     await toolbarButton.registerReaderContextMenu();
     this.logger.info('Reader context menu registered');
 
+    // Initialize auto-index manager (monitors for new items)
+    this.initAutoIndexManager();
+
     this.logger.info('=== Plugin Started Successfully ===');
+  }
+
+  /**
+   * Initialize auto-index manager for monitoring new items
+   */
+  private initAutoIndexManager(): void {
+    // Set callback to index items (silent mode for auto-indexing)
+    autoIndexManager.setIndexCallback(async (items: any[]) => {
+      await this.indexItemsSilent(items);
+    });
+
+    // Set vector store reference for checking indexed status
+    if (this.vectorStore) {
+      autoIndexManager.setVectorStore(this.vectorStore);
+    }
+
+    // Start monitoring (respects autoIndex preference)
+    autoIndexManager.start();
+    this.logger.info('Auto-index manager initialized');
   }
 
   private async initializeCore(): Promise<void> {
@@ -219,6 +242,8 @@ class ZotSeekPlugin {
     if (!this.vectorStore) {
       this.logger.info('Getting vector store...');
       this.vectorStore = getVectorStore();
+      // Update auto-index manager with vector store reference
+      autoIndexManager.setVectorStore(this.vectorStore);
     }
 
     if (!this.vectorStore.isReady()) {
@@ -920,6 +945,144 @@ class ZotSeekPlugin {
   }
 
   /**
+   * Index items silently (for auto-indexing)
+   * Shows a progress indicator while running
+   */
+  private async indexItemsSilent(items: any[]): Promise<void> {
+    if (this.indexing) {
+      this.logger.debug('Indexing already in progress, skipping auto-index');
+      return;
+    }
+
+    if (items.length === 0) {
+      return;
+    }
+
+    this.indexing = true;
+    const Z = getZotero();
+
+    this.logger.info(`Auto-indexing ${items.length} items...`);
+
+    // Show progress window immediately
+    const progressWin = new (Z.ProgressWindow as any)({ closeOnClick: true });
+    progressWin.changeHeadline('ZotSeek');
+
+    // Get truncated title for display (max 35 chars)
+    const firstTitle = items[0]?.getField?.('title') || 'item';
+    const truncTitle = firstTitle.length > 35 ? firstTitle.substring(0, 32) + '...' : firstTitle;
+    const displayText = items.length === 1 ? truncTitle : `${items.length} items`;
+
+    const itemRow = new progressWin.ItemProgress(
+      'chrome://zotero/skin/spinner-16px.png',
+      `Indexing: ${displayText}`
+    );
+    progressWin.show();
+
+    try {
+      // Ensure vector store is ready
+      await this.ensureStoreReady();
+
+      // Get indexing mode
+      const indexingMode = getIndexingMode(Z);
+
+      // Reset pipeline to ensure fresh initialization
+      itemRow.setText('Loading model...');
+      embeddingPipeline.reset();
+      await embeddingPipeline.init();
+
+      // Extract chunks from items
+      itemRow.setText('Extracting...');
+      const extractedItems = await textExtractor.extractChunksFromItems(items, indexingMode);
+
+      if (extractedItems.length === 0) {
+        this.logger.info('No content extracted from items');
+        try { itemRow.setIcon('chrome://zotero/skin/cross.png'); } catch { /* ignore */ }
+        itemRow.setText('✗ No content found');
+        progressWin.startCloseTimer(3000);
+        return;
+      }
+
+      // Count total chunks
+      const totalChunks = extractedItems.reduce((sum, item) => sum + item.chunks.length, 0);
+      this.logger.info(`Extracted ${totalChunks} chunks from ${extractedItems.length} items`);
+
+      // Prepare chunks for embedding
+      const textsForEmbedding: Array<{ id: string; text: string; title: string }> = [];
+      for (const extracted of extractedItems) {
+        for (const chunk of extracted.chunks) {
+          textsForEmbedding.push({
+            id: `${extracted.itemId}_${chunk.index}`,
+            text: chunk.text,
+            title: extracted.title,
+          });
+        }
+      }
+
+      // Generate embeddings with progress updates
+      const embeddingMap = new Map<string, { embedding: number[]; modelId: string }>();
+      let processed = 0;
+
+      for (const item of textsForEmbedding) {
+        processed++;
+        itemRow.setText(`Embedding ${processed}/${textsForEmbedding.length}...`);
+        const result = await embeddingPipeline.embed(item.text);
+        embeddingMap.set(item.id, result);
+      }
+
+      // Store embeddings with chunk metadata
+      itemRow.setText('Saving...');
+      const paperEmbeddings: PaperEmbedding[] = [];
+
+      for (const extracted of extractedItems) {
+        for (const chunk of extracted.chunks) {
+          const embeddingKey = `${extracted.itemId}_${chunk.index}`;
+          const embeddingData = embeddingMap.get(embeddingKey);
+          if (!embeddingData) continue;
+
+          paperEmbeddings.push({
+            itemId: extracted.itemId,
+            chunkIndex: chunk.index,
+            itemKey: extracted.itemKey,
+            libraryId: extracted.libraryId,
+            title: extracted.title,
+            abstract: extracted.abstract || undefined,
+            chunkText: chunk.text,
+            textSource: chunk.type,
+            embedding: embeddingData.embedding,
+            modelId: embeddingData.modelId,
+            indexedAt: new Date().toISOString(),
+            contentHash: extracted.contentHash,
+            pageNumber: chunk.pageNumber,
+            paragraphIndex: chunk.paragraphIndex,
+            startChar: chunk.startChar,
+            endChar: chunk.endChar,
+          });
+        }
+      }
+
+      // Store in vector store
+      await this.vectorStore!.putBatch(paperEmbeddings);
+
+      this.logger.info(`Auto-indexed ${extractedItems.length} items (${paperEmbeddings.length} chunks)`);
+
+      // Show success - use try-catch for setIcon as it may not exist in all Zotero versions
+      try { itemRow.setIcon('chrome://zotero/skin/tick.png'); } catch { /* ignore */ }
+      itemRow.setText(`✓ ${paperEmbeddings.length} chunks indexed`);
+      progressWin.startCloseTimer(3000);
+
+    } catch (error: any) {
+      this.logger.error(`Auto-indexing failed: ${error?.message || error}`);
+      // Show error in progress window - use try-catch for setIcon
+      const errMsg = (error?.message || 'Unknown error').substring(0, 30);
+      try { itemRow.setIcon('chrome://zotero/skin/cross.png'); } catch { /* ignore */ }
+      itemRow.setText(`✗ Error: ${errMsg}`);
+      progressWin.startCloseTimer(4000);
+    } finally {
+      this.indexing = false;
+    }
+  }
+
+  /**
    * Format duration in milliseconds to human-readable string
    */
   private formatDuration(ms: number): string {
@@ -1043,6 +1206,9 @@ class ZotSeekPlugin {
 
   async onShutdown(): Promise<void> {
     this.logger.info('Shutting down plugin');
+
+    // Stop auto-index manager
+    autoIndexManager.stop();
 
     // Remove XUL-injected menu elements and toolbar button
     const Z = getZotero();
