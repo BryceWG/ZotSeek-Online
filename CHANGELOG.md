@@ -2,6 +2,27 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [1.5.0] - 2026-01-20
+
+### Added
+- **Auto-Index New Items** - Automatically index papers when you add them to your library
+  - Enable via Settings → ZotSeek → "Auto-index new items"
+  - Waits for PDF attachments with automatic retry (exponential backoff)
+  - Batches multiple items together during bulk imports
+  - Shows live progress indicator while indexing
+  - Respects your indexing mode setting (Abstract or Full Document)
+- **Column Sorting** - Click column headers to sort search results
+  - Sort by Match %, Year, Title, Authors, or Source
+  - Smart defaults: Match/Year sort descending, text columns ascending
+  - Visual indicators (▲/▼) show current sort direction
+
+### Technical
+- New `AutoIndexManager` singleton using `Zotero.Notifier.registerObserver()` API
+- Added `indexItemsSilent()` method for background indexing with progress window
+- Fixed `setIcon` compatibility issue with Zotero's ProgressWindow API
+
+---
+
 ## [1.4.0] - 2026-01-15
 
 ### Added
