@@ -96,6 +96,10 @@ export class SearchResultsTable {
   // Granularity mode: 'section' (aggregated) or 'location' (exact page/paragraph)
   private granularity: 'section' | 'location' = 'section';
 
+  // Sort state tracking
+  private currentSortColumn: string | null = null;
+  private currentSortAscending: boolean = true;
+
   constructor(options: ResultsTableOptions) {
     this.logger = new Logger('SearchResultsTable');
     this.options = {
@@ -165,9 +169,7 @@ export class SearchResultsTable {
         }
       })
       .setProp('onColumnSort', (columnIndex: number) => {
-        // Handle column sorting
-        this.logger.debug(`Column ${columnIndex} clicked for sorting`);
-        // For now, just log - you can implement sorting logic later
+        this.handleColumnSort(columnIndex);
       })
       .setProp('onItemContextMenu', (_event: Event, _x: number, _y: number, _index: number) => {
         // Context menu handler - prevents TypeError when right-clicking
@@ -471,8 +473,11 @@ export class SearchResultsTable {
     this.results = [];
     this.enrichedResults.clear();
     this.exactPages.clear();
+    this.currentSortColumn = null;
+    this.currentSortAscending = true;
     if (this.tableHelper) {
       await this.tableHelper.render();
+      this.updateSortIndicator();  // Clear sort indicator
     }
   }
 
@@ -548,6 +553,95 @@ export class SearchResultsTable {
   }
 
   /**
+   * Handle column header click for sorting
+   * Maps column index to dataKey and toggles sort direction
+   */
+  private handleColumnSort(columnIndex: number): void {
+    const columns = this.options.columns || DEFAULT_COLUMNS;
+    const column = columns[columnIndex];
+
+    if (!column) {
+      this.logger.debug(`Invalid column index: ${columnIndex}`);
+      return;
+    }
+
+    const dataKey = column.dataKey;
+
+    // Skip non-sortable columns
+    if (dataKey === 'indicator' || dataKey === 'page') {
+      this.logger.debug(`Column '${dataKey}' is not sortable`);
+      return;
+    }
+
+    this.logger.debug(`Sorting by column: ${dataKey}`);
+
+    // Determine sort direction
+    let ascending: boolean;
+    if (this.currentSortColumn === dataKey) {
+      // Toggle direction if clicking the same column
+      ascending = !this.currentSortAscending;
+    } else {
+      // New column: default direction based on column type
+      // Similarity/year default to descending (highest first)
+      // Text columns default to ascending (A-Z)
+      ascending = dataKey !== 'similarity' && dataKey !== 'year';
+    }
+
+    // Update sort state
+    this.currentSortColumn = dataKey;
+    this.currentSortAscending = ascending;
+
+    // Perform the sort
+    this.sortBy(dataKey, ascending);
+
+    this.logger.debug(`Sorted by ${dataKey} (${ascending ? 'ascending' : 'descending'})`);
+
+    // Update visual sort indicator
+    this.updateSortIndicator();
+  }
+
+  /**
+   * Update the visual sort indicator (CSS classes) on column headers
+   */
+  private updateSortIndicator(): void {
+    if (!this.container) return;
+
+    // Find all header cells
+    const headerCells = this.container.querySelectorAll('.tree-header .cell');
+
+    headerCells.forEach((cell) => {
+      const dataKey = cell.getAttribute('data-key');
+
+      // Remove existing sort classes
+      cell.classList.remove('sorted-ascending', 'sorted-descending');
+
+      // Add sort class if this is the sorted column
+      if (dataKey === this.currentSortColumn) {
+        cell.classList.add(this.currentSortAscending ? 'sorted-ascending' : 'sorted-descending');
+      }
+    });
+  }
+
+  /**
+   * Get current sort state (for UI indicators)
+   */
+  getSortState(): { column: string | null; ascending: boolean } {
+    return {
+      column: this.currentSortColumn,
+      ascending: this.currentSortAscending,
+    };
+  }
+
+  /**
+   * Reset sort to default (by relevance score, descending)
+   */
+  async resetSort(): Promise<void> {
+    this.currentSortColumn = 'similarity';
+    this.currentSortAscending = false;
+    await this.sortBy('similarity', false);
+  }
+
+  /**
    * Focus the table for keyboard navigation
    */
   focus(): void {
@@ -596,6 +690,8 @@ export class SearchResultsTable {
     this.results = [];
     this.enrichedResults.clear();
     this.exactPages.clear();
+    this.currentSortColumn = null;
+    this.currentSortAscending = true;
     this.container = null;
     this.logger.debug('Results table destroyed');
   }

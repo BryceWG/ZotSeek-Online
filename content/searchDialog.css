@@ -404,6 +404,50 @@
   background: rgba(76, 175, 80, 0.25) !important;
 }
 
+/* Column Header Sorting Styles */
+#zotseek-results-container .tree-header .cell,
+#similar-documents-results-container .tree-header .cell {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 18px;  /* Space for sort indicator */
+}
+
+/* Non-sortable columns */
+#zotseek-results-container .tree-header .cell[data-key="indicator"],
+#zotseek-results-container .tree-header .cell[data-key="page"] {
+  cursor: default;
+}
+
+/* Sortable column hover effect */
+#zotseek-results-container .tree-header .cell:hover:not([data-key="indicator"]):not([data-key="page"]),
+#similar-documents-results-container .tree-header .cell:hover:not([data-key="indicator"]):not([data-key="page"]) {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* Sort direction indicator (arrow) - shown via CSS ::after */
+#zotseek-results-container .tree-header .cell.sorted-ascending::after,
+#similar-documents-results-container .tree-header .cell.sorted-ascending::after {
+  content: '▲';
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  color: #1976D2;
+}
+
+#zotseek-results-container .tree-header .cell.sorted-descending::after,
+#similar-documents-results-container .tree-header .cell.sorted-descending::after {
+  content: '▼';
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  color: #1976D2;
+}
+
 /* Dark mode adjustments */
 @media (prefers-color-scheme: dark) {
   #search-box {
@@ -470,5 +514,19 @@
   
   #zotseek-results-container .row[data-source="both"].selected {
     background: rgba(76, 175, 80, 0.3) !important;
+  }
+
+  /* Dark mode: Sortable column hover */
+  #zotseek-results-container .tree-header .cell:hover:not([data-key="indicator"]):not([data-key="page"]),
+  #similar-documents-results-container .tree-header .cell:hover:not([data-key="indicator"]):not([data-key="page"]) {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  /* Dark mode: Sort indicator color */
+  #zotseek-results-container .tree-header .cell.sorted-ascending::after,
+  #zotseek-results-container .tree-header .cell.sorted-descending::after,
+  #similar-documents-results-container .tree-header .cell.sorted-ascending::after,
+  #similar-documents-results-container .tree-header .cell.sorted-descending::after {
+    color: #64B5F6;
   }
 }
