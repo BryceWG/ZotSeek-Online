@@ -170,6 +170,10 @@ export class ZotSeekDialogVTable {
       openBtn?.addEventListener('click', () => this.openSelected());
       closeBtn?.addEventListener('click', () => this.close());
 
+      // Settings button - opens ZotSeek preferences
+      const settingsBtn = doc.getElementById('zotseek-settings-btn');
+      settingsBtn?.addEventListener('click', () => this.openSettings());
+
       // Find Pages button
       const findPagesBtn = doc.getElementById('zotseek-find-pages-btn');
       findPagesBtn?.addEventListener('click', () => this.findExactPages());
@@ -688,6 +692,36 @@ export class ZotSeekDialogVTable {
    */
   private close(): void {
     this.window?.close();
+  }
+
+  /**
+   * Open ZotSeek preferences pane
+   */
+  private openSettings(): void {
+    try {
+      const Z = getZotero();
+      const mainWindow = Z?.getMainWindow();
+      if (mainWindow) {
+        // Open Zotero preferences dialog
+        const prefsWin = mainWindow.openDialog(
+          'chrome://zotero/content/preferences/preferences.xhtml',
+          'zotero-prefs',
+          'chrome,titlebar,toolbar,centerscreen'
+        );
+
+        // After preferences window opens, navigate to ZotSeek pane
+        prefsWin.addEventListener('load', () => {
+          setTimeout(() => {
+            const zotseekPane = prefsWin.document.querySelector('richlistitem[value$="zotseek@zotero.org"]') as HTMLElement;
+            if (zotseekPane) {
+              zotseekPane.click();
+            }
+          }, 100);
+        });
+      }
+    } catch (error) {
+      this.logger.error('Failed to open settings:', error);
+    }
   }
 
   /**
