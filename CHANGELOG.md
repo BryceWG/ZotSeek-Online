@@ -2,6 +2,33 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [1.6.0] - 2026-01-24
+
+### Added
+- **Checkpoint Saving** - Indexing now saves progress every 25 items
+  - Resume safely after crash by simply re-running "Update Index"
+  - Already-indexed items are automatically skipped
+  - Shows batch progress during indexing (Batch X/Y)
+- **Settings Button** - Quick access to ZotSeek preferences from the search dialog
+  - Located in bottom-left corner of search dialog
+  - Opens directly to the ZotSeek settings pane
+
+### Changed
+- **Redesigned Settings Panel** - Modern, visual preferences UI
+  - Index statistics displayed as colorful cards (Papers, Chunks, Storage)
+  - Indexing mode selection with visual radio-style cards
+  - Organized sections: Auto-Indexing, Search Settings, Advanced Settings
+  - Action buttons with visual hierarchy (green for recommended, yellow for destructive)
+- **Improved Alerts** - Dialogs now show "ZotSeek" title instead of generic "[JavaScript Application]"
+
+### Technical
+- Implemented batch processing with `CHECKPOINT_BATCH_SIZE = 25`
+- Added `isIndexed()` check to skip already-indexed items
+- Replaced `win.alert()` with `Services.prompt.alert()` for proper dialog titles
+- Added `updateModeCards()` for syncing visual state of mode selection cards
+
+---
+
 ## [1.5.0] - 2026-01-20
 
 ### Added

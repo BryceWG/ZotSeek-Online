@@ -20,7 +20,8 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - 📑 **Section-Aware** - See which section matched (Abstract, Methods, Results)
 - 📍 **Passage-Level Location** - Jump to exact page & paragraph in Full Document mode
 - 🔄 **Auto-Index** - Automatically index new papers when you add them to your library
-- ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek
+- 💾 **Crash-Resilient** - Checkpoint saving every 25 items, resume after interruption
+- ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek (also accessible from search dialog)
 
 ---
 
@@ -384,6 +385,12 @@ Install via: Zotero → Tools → Add-ons → Install Add-on From File
    - Option to cancel at any time
 4. Indexing speed: ~3 seconds per chunk
 
+**Crash-Resilient Indexing:**
+- Progress is saved every 25 items (checkpoint saving)
+- If Zotero crashes or you need to stop, simply re-run "Update Index"
+- Already-indexed items are automatically skipped
+- No need to start over from scratch
+
 **Progress Window Features:**
 - ✅ AI model loaded status
 - ✅ Extraction progress (chunks from items)
@@ -435,6 +442,7 @@ ZotSeek can automatically index papers as you add them to your library:
 3. Enter a natural language query (e.g., "machine learning for medical diagnosis")
 4. View results ranked by semantic similarity
 5. Double-click any result to open it in Zotero
+6. Click **⚙ Settings** (bottom-left) to quickly access ZotSeek preferences
 
 ### View Debug Output
 
