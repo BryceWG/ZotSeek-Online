@@ -297,16 +297,6 @@ async function generateEmbedding(jobId: string, text: string, isQuery: boolean =
     const embedding = Array.from(output.data as Float32Array);  // 768 dimensions
     const processingTimeMs = Date.now() - startTime;
 
-    // Log slow embeddings
-    if (processingTimeMs > 1000) {
-      postMessage({
-        type: 'log',
-        level: 'warn',
-        message: `Slow embedding generation: ${processingTimeMs}ms`,
-        data: { textLength: processedText.length }
-      });
-    }
-
     postMessage({
       type: 'embedding',
       jobId,
