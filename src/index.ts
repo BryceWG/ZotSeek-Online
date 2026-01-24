@@ -281,6 +281,9 @@ class ZotSeekPlugin {
         this.logger.info('Preference pane unloaded');
         preferencesManager.destroy();
         break;
+      case 'updateModeCards':
+        preferencesManager.updateModeCards();
+        break;
       default:
         break;
     }
@@ -752,11 +755,19 @@ class ZotSeekPlugin {
   /**
    * Index items for semantic search
    * Uses the configurable indexing mode (abstract, fulltext, or hybrid)
+   *
+   * Implements checkpoint/incremental saving:
+   * - Skips already-indexed items (allows resuming after crash)
+   * - Saves embeddings in batches of ~25 items (prevents total loss on crash)
+   * - Memory efficient (only one batch in memory at a time)
    */
   private async indexItems(items: any[]): Promise<void> {
     this.indexing = true;
     const Z = getZotero();
     const indexStartTime = Date.now(); // Track total indexing time
+
+    // Checkpoint batch size - save every N items to prevent data loss
+    const CHECKPOINT_BATCH_SIZE = 25;
 
     // Create stable progress window using toolkit
     const progressWindow = new StableProgressWindow({
@@ -777,6 +788,29 @@ class ZotSeekPlugin {
       this.logger.info(`Indexing mode: ${indexingMode}`);
       progressWindow.addLine(`Indexing mode: ${indexingMode}`);
 
+      // === PHASE 1: Filter out already-indexed items ===
+      progressWindow.setHeadline('Checking for already-indexed items...');
+      const itemsToIndex: any[] = [];
+      for (const item of items) {
+        const isIndexed = await this.vectorStore!.isIndexed(item.id);
+        if (!isIndexed) {
+          itemsToIndex.push(item);
+        }
+      }
+      const skippedAlreadyIndexed = items.length - itemsToIndex.length;
+      if (skippedAlreadyIndexed > 0) {
+        this.logger.info(`Skipped ${skippedAlreadyIndexed} already-indexed items`);
+        progressWindow.addLine(`✓ Skipped ${skippedAlreadyIndexed} already-indexed items`, 'chrome://zotero/skin/tick.png');
+      }
+
+      // If all items are already indexed, we're done
+      if (itemsToIndex.length === 0) {
+        progressWindow.setHeadline('All items already indexed!');
+        progressWindow.addLine(`✓ ${items.length} items already in index`, 'chrome://zotero/skin/tick.png');
+        progressWindow.complete('Nothing to index - all items are up to date!', true);
+        return;
+      }
+
       // Reset pipeline to ensure fresh initialization
       embeddingPipeline.reset();
 
@@ -785,118 +819,131 @@ class ZotSeekPlugin {
       this.logger.info('Embedding pipeline initialized (Transformers.js)')
       progressWindow.addLine('✓ AI model loaded', 'chrome://zotero/skin/tick.png');
 
-      // Extract chunks from items based on indexing mode
-      this.logger.info(`Extracting chunks from items (mode: ${indexingMode})...`);
-      progressWindow.setHeadline(`Extracting text from ${items.length} items...`);
+      // === PHASE 2: Process items in batches with checkpoints ===
+      const totalBatches = Math.ceil(itemsToIndex.length / CHECKPOINT_BATCH_SIZE);
+      let totalItemsIndexed = 0;
+      let totalChunksIndexed = 0;
+      let totalItemsSkipped = 0; // Items with no extractable content
 
-      const extractedItems = await textExtractor.extractChunksFromItems(items, indexingMode, undefined, (progress) => {
+      this.logger.info(`Processing ${itemsToIndex.length} items in ${totalBatches} batches of ${CHECKPOINT_BATCH_SIZE}`);
+
+      for (let batchStart = 0; batchStart < itemsToIndex.length; batchStart += CHECKPOINT_BATCH_SIZE) {
         if (progressWindow.isCancelled()) {
           throw new Error('Cancelled by user');
         }
 
-        // Use the new updateProgressWithETA method for better display
-        progressWindow.updateProgressWithETA(
-          `Processing: ${progress.currentTitle}`,
-          progress.current,
-          progress.total
-        );
-      });
+        const batchEnd = Math.min(batchStart + CHECKPOINT_BATCH_SIZE, itemsToIndex.length);
+        const batchItems = itemsToIndex.slice(batchStart, batchEnd);
+        const batchNumber = Math.floor(batchStart / CHECKPOINT_BATCH_SIZE) + 1;
 
-      // Count total chunks
-      const totalChunks = extractedItems.reduce((sum, item) => sum + item.chunks.length, 0);
-      this.logger.info(`Extracted ${totalChunks} chunks from ${extractedItems.length} items`);
-      progressWindow.addLine(`✓ Extracted ${totalChunks} chunks from ${extractedItems.length} items`, 'chrome://zotero/skin/tick.png');
+        // === STEP 1: Extract chunks for this batch ===
+        progressWindow.setHeadline(`Batch ${batchNumber}/${totalBatches}: Extracting text...`);
+        this.logger.info(`Batch ${batchNumber}/${totalBatches}: Extracting ${batchItems.length} items`);
 
-      // Prepare all chunks for embedding
-      const textsForEmbedding: Array<{ id: string; text: string; title: string }> = [];
-      for (const extracted of extractedItems) {
-        for (const chunk of extracted.chunks) {
-          // Use itemId_chunkIndex as the ID for embedding
-          textsForEmbedding.push({
-            id: `${extracted.itemId}_${chunk.index}`,
-            text: chunk.text,
-            title: extracted.title,
-          });
-        }
-      }
-
-      // Generate embeddings for all chunks
-      this.logger.info(`Generating embeddings for ${textsForEmbedding.length} chunks...`);
-      progressWindow.setHeadline(`Generating embeddings for ${textsForEmbedding.length} chunks...`);
-
-      const embeddingMap = new Map<string, { embedding: number[]; modelId: string }>();
-
-      let processed = 0;
-      const startTime = Date.now();
-
-      for (const item of textsForEmbedding) {
-        if (progressWindow.isCancelled()) {
-          throw new Error('Cancelled by user');
-        }
-
-        processed++;
-
-        // Use the stable progress window's ETA calculation
-        progressWindow.updateProgressWithETA(
-          `Processing: ${item.title}`,
-          processed,
-          textsForEmbedding.length
+        const extractedBatch = await textExtractor.extractChunksFromItems(
+          batchItems,
+          indexingMode,
+          undefined,
+          (progress) => {
+            if (progressWindow.isCancelled()) {
+              throw new Error('Cancelled by user');
+            }
+            progressWindow.updateProgressWithETA(
+              `Batch ${batchNumber}/${totalBatches}: ${progress.currentTitle}`,
+              batchStart + progress.current,
+              itemsToIndex.length
+            );
+          }
         );
 
-        const result = await embeddingPipeline.embed(item.text);
-        if (result) {
-          embeddingMap.set(item.id, result);
-        }
+        const batchSkipped = batchItems.length - extractedBatch.length;
+        totalItemsSkipped += batchSkipped;
 
-        // Yield to UI thread periodically
-        if (processed % 5 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 0));
-        }
-      }
-
-      progressWindow.addLine(`✓ Generated ${embeddingMap.size} embeddings`, 'chrome://zotero/skin/tick.png');
-
-      // Store embeddings in vector store
-      progressWindow.setHeadline('Saving embeddings to database...');
-      progressWindow.updateProgress('Storing embeddings...', null);
-
-      const paperEmbeddings: PaperEmbedding[] = [];
-      for (const extracted of extractedItems) {
-        // Delete existing chunks for this item before adding new ones
-        await this.vectorStore!.deleteItemChunks(extracted.itemId);
-
-        for (const chunk of extracted.chunks) {
-          const embeddingKey = `${extracted.itemId}_${chunk.index}`;
-          const embeddingResult = embeddingMap.get(embeddingKey);
-
-          if (embeddingResult) {
-            paperEmbeddings.push({
-              itemId: extracted.itemId,
-              chunkIndex: chunk.index,
-              itemKey: extracted.itemKey,
-              libraryId: extracted.libraryId,
+        // === STEP 2: Generate embeddings for this batch ===
+        const batchChunks: Array<{ id: string; text: string; title: string }> = [];
+        for (const extracted of extractedBatch) {
+          for (const chunk of extracted.chunks) {
+            batchChunks.push({
+              id: `${extracted.itemId}_${chunk.index}`,
+              text: chunk.text,
               title: extracted.title,
-              abstract: extracted.abstract || undefined,
-              chunkText: chunk.text,
-              // Store the actual chunk type for better search result display
-              // e.g., 'summary', 'methods', 'findings', 'content'
-              textSource: chunk.type,
-              embedding: embeddingResult.embedding,
-              modelId: embeddingResult.modelId,
-              indexedAt: new Date().toISOString(),
-              contentHash: extracted.contentHash,
-              // Passage-level location (Phase 2)
-              pageNumber: chunk.pageNumber,
-              paragraphIndex: chunk.paragraphIndex,
-              startChar: chunk.startChar,
-              endChar: chunk.endChar,
             });
           }
         }
-      }
 
-      await this.vectorStore!.putBatch(paperEmbeddings);
-      this.logger.info(`Stored ${paperEmbeddings.length} embedding chunks for ${extractedItems.length} items`);
+        progressWindow.setHeadline(`Batch ${batchNumber}/${totalBatches}: Generating embeddings...`);
+        this.logger.info(`Batch ${batchNumber}/${totalBatches}: Embedding ${batchChunks.length} chunks`);
+
+        const embeddingMap = new Map<string, { embedding: number[]; modelId: string }>();
+        let chunkProcessed = 0;
+
+        for (const chunk of batchChunks) {
+          if (progressWindow.isCancelled()) {
+            throw new Error('Cancelled by user');
+          }
+
+          chunkProcessed++;
+          progressWindow.updateProgressWithETA(
+            `Batch ${batchNumber}/${totalBatches}: Embedding chunks`,
+            batchStart + Math.floor((chunkProcessed / batchChunks.length) * batchItems.length),
+            itemsToIndex.length
+          );
+
+          const result = await embeddingPipeline.embed(chunk.text);
+          if (result) {
+            embeddingMap.set(chunk.id, result);
+          }
+
+          // Yield to UI thread periodically
+          if (chunkProcessed % 5 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+          }
+        }
+
+        // === STEP 3: Save this batch (CHECKPOINT) ===
+        progressWindow.setHeadline(`Batch ${batchNumber}/${totalBatches}: Saving checkpoint...`);
+
+        const batchEmbeddings: PaperEmbedding[] = [];
+        for (const extracted of extractedBatch) {
+          // Delete existing chunks for this item before adding new ones
+          await this.vectorStore!.deleteItemChunks(extracted.itemId);
+
+          for (const chunk of extracted.chunks) {
+            const embeddingKey = `${extracted.itemId}_${chunk.index}`;
+            const embeddingResult = embeddingMap.get(embeddingKey);
+
+            if (embeddingResult) {
+              batchEmbeddings.push({
+                itemId: extracted.itemId,
+                chunkIndex: chunk.index,
+                itemKey: extracted.itemKey,
+                libraryId: extracted.libraryId,
+                title: extracted.title,
+                abstract: extracted.abstract || undefined,
+                chunkText: chunk.text,
+                textSource: chunk.type,
+                embedding: embeddingResult.embedding,
+                modelId: embeddingResult.modelId,
+                indexedAt: new Date().toISOString(),
+                contentHash: extracted.contentHash,
+                pageNumber: chunk.pageNumber,
+                paragraphIndex: chunk.paragraphIndex,
+                startChar: chunk.startChar,
+                endChar: chunk.endChar,
+              });
+            }
+          }
+        }
+
+        // Save this batch to database
+        await this.vectorStore!.putBatch(batchEmbeddings);
+
+        totalItemsIndexed += extractedBatch.length;
+        totalChunksIndexed += batchEmbeddings.length;
+
+        this.logger.info(`Checkpoint ${batchNumber}/${totalBatches}: Saved ${batchEmbeddings.length} chunks from ${extractedBatch.length} items`);
+        progressWindow.addLine(`✓ Checkpoint ${batchNumber}/${totalBatches}: ${extractedBatch.length} items, ${batchEmbeddings.length} chunks saved`);
+      }
 
       // Store the indexing mode in metadata so we know what mode was used to build the index
       await this.vectorStore!.setMetadata('indexingMode', indexingMode);
@@ -908,8 +955,8 @@ class ZotSeekPlugin {
       this.logger.info(`Indexing completed in ${indexDurationMs}ms`);
 
       // Calculate stats for display
-      const avgChunksPerItem = extractedItems.length > 0
-        ? Math.round((paperEmbeddings.length / extractedItems.length) * 10) / 10
+      const avgChunksPerItem = totalItemsIndexed > 0
+        ? Math.round((totalChunksIndexed / totalItemsIndexed) * 10) / 10
         : 0;
 
       // Format duration for display
@@ -918,13 +965,16 @@ class ZotSeekPlugin {
       // Show completion
       progressWindow.setHeadline('Indexing Complete!');
       progressWindow.addLine(`✓ Mode: ${indexingMode}`, 'chrome://zotero/skin/tick.png');
-      progressWindow.addLine(`✓ Items indexed: ${extractedItems.length}`, 'chrome://zotero/skin/tick.png');
-      progressWindow.addLine(`✓ Total chunks: ${paperEmbeddings.length}`, 'chrome://zotero/skin/tick.png');
+      if (skippedAlreadyIndexed > 0) {
+        progressWindow.addLine(`✓ Previously indexed: ${skippedAlreadyIndexed} items`, 'chrome://zotero/skin/tick.png');
+      }
+      progressWindow.addLine(`✓ Newly indexed: ${totalItemsIndexed} items`, 'chrome://zotero/skin/tick.png');
+      progressWindow.addLine(`✓ Total chunks: ${totalChunksIndexed}`, 'chrome://zotero/skin/tick.png');
       progressWindow.addLine(`✓ Avg chunks/item: ${avgChunksPerItem}`, 'chrome://zotero/skin/tick.png');
       progressWindow.addLine(`✓ Duration: ${durationFormatted}`, 'chrome://zotero/skin/tick.png');
 
-      if (items.length - extractedItems.length > 0) {
-        progressWindow.addLine(`⚠ Skipped: ${items.length - extractedItems.length} items`);
+      if (totalItemsSkipped > 0) {
+        progressWindow.addLine(`⚠ No content: ${totalItemsSkipped} items`);
       }
 
       progressWindow.complete('Indexing completed successfully!', true);
@@ -1194,13 +1244,24 @@ class ZotSeekPlugin {
   }
 
   /**
-   * Show alert dialog
+   * Show alert dialog using proper Zotero/Mozilla prompt service
    */
-  private showAlert(message: string): void {
+  private showAlert(message: string, title = 'ZotSeek'): void {
     const Z = getZotero();
     const win = Z?.getMainWindow();
-    if (win) {
-      win.alert(message);
+    if (!win) return;
+
+    try {
+      // Use Mozilla's prompt service for proper titled dialogs
+      const ps = Services.prompt;
+      if (ps) {
+        ps.alert(win, title, message);
+      } else {
+        // Fallback to window.alert if Services not available
+        win.alert(message);
+      }
+    } catch (error) {
+      this.logger.error('Failed to show alert:', error);
     }
   }
 

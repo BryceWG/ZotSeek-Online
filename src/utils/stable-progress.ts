@@ -6,6 +6,8 @@
 import { ProgressWindowHelper } from 'zotero-plugin-toolkit';
 import { Logger } from './logger';
 
+declare const Services: any;
+
 // Set default icon for all progress windows
 ProgressWindowHelper.setIconURI(
   'default',
@@ -52,7 +54,12 @@ export class StableProgressWindow {
       
       // Show the window
       this.progressWindow.show();
-      
+
+      // Resize the window to be taller (Zotero's default is too short for multiple status lines)
+      // and try to make it not always on top
+      this.resizeWindow(350, 320);
+      this.adjustWindowLevel();
+
       this.logger.debug(`Progress window created: ${options.title}`);
     } catch (error) {
       this.logger.error('Failed to create progress window:', error);
@@ -227,6 +234,49 @@ export class StableProgressWindow {
   private useFallback(): void {
     this.logger.warn('Using console logging fallback for progress');
     this.progressWindow = null;
+  }
+
+  /**
+   * Resize the progress window to accommodate more status lines
+   */
+  private resizeWindow(width: number, height: number): void {
+    try {
+      // Find and resize the progress window
+      const windows = (Services as any).wm.getEnumerator(null);
+      while (windows.hasMoreElements()) {
+        const win = windows.getNext();
+        if (win.document?.title === 'Progress') {
+          win.resizeTo(width, height);
+          this.logger.debug(`Resized progress window to ${width}x${height}`);
+          break;
+        }
+      }
+    } catch (error) {
+      this.logger.debug('Could not resize progress window:', error);
+    }
+  }
+
+  /**
+   * Try to make the progress window not always on top
+   */
+  private adjustWindowLevel(): void {
+    try {
+      const windows = (Services as any).wm.getEnumerator(null);
+      while (windows.hasMoreElements()) {
+        const win = windows.getNext();
+        if (win.document?.title === 'Progress') {
+          // Try to lower the window level so it doesn't float above all apps
+          // Note: This may not work on all platforms
+          if (win.document?.documentElement) {
+            win.document.documentElement.setAttribute('level', 'normal');
+          }
+          this.logger.debug('Adjusted progress window level');
+          break;
+        }
+      }
+    } catch (error) {
+      this.logger.debug('Could not adjust window level:', error);
+    }
   }
   
   /**
