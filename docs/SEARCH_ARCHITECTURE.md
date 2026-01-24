@@ -12,10 +12,16 @@ A comprehensive guide to how semantic and hybrid search works in ZotSeek.
 4. [Semantic Search Pipeline](#semantic-search-pipeline)
    - [MaxSim Aggregation](#maxsim-aggregation)
    - [Parent-Child Retrieval Pattern](#parent-child-retrieval-pattern)
-5. [Section-Aware Chunking](#section-aware-chunking)
+5. [Chunking Strategy](#chunking-strategy)
+   - [Trade-offs: Chunk Size Selection](#trade-offs-chunk-size-selection)
+   - [Version-Aware Defaults](#version-aware-defaults)
+   - [Paragraph-Based Chunking](#paragraph-based-chunking)
+   - [Token Estimation](#token-estimation)
+   - [Chunk Overlap](#chunk-overlap)
+6. [Section-Aware Chunking](#section-aware-chunking)
    - [References Filtering](#references-filtering)
-6. [Performance Optimizations](#performance-optimizations)
-7. [Query Analysis](#query-analysis)
+7. [Performance Optimizations](#performance-optimizations)
+8. [Query Analysis](#query-analysis)
 
 ---
 
@@ -351,6 +357,88 @@ const key = returnAllChunks
 
 ---
 
+## Chunking Strategy
+
+### Trade-offs: Chunk Size Selection
+
+Embedding time scales **O(n²)** with sequence length due to transformer attention. Chunk size directly impacts both indexing speed and search quality:
+
+| Chunk Size | Speed | Precision | Recall | Best For |
+|------------|-------|-----------|--------|----------|
+| **500-800 tokens** | Very fast (~0.3-0.5s/chunk) | High | Lower | Finding specific claims, methods, passages |
+| **2000 tokens** | Moderate (~3s/chunk) | Balanced | Balanced | General use (default for Zotero 8) |
+| **4000+ tokens** | Slow (~10s+/chunk) | Lower | Higher | Finding papers about broad topics |
+| **7000 tokens** | Very slow (~45s/chunk) | Low | High | Not recommended |
+
+**Precision vs Recall:**
+- **Smaller chunks** = more precise matches to specific passages, but may miss broader context
+- **Larger chunks** = captures more context, but similarity scores get "diluted" by surrounding text
+
+### Version-Aware Defaults
+
+ZotSeek automatically adjusts chunk size based on your Zotero version:
+
+| Zotero Version | Firefox Engine | Default maxTokens | Reason |
+|----------------|----------------|-------------------|--------|
+| **Zotero 7** | Firefox 115 ESR | **800** | ~8-10x slower WASM/SIMD performance |
+| **Zotero 8** | Firefox 140 ESR | **2000** | Faster WASM, can handle larger chunks |
+
+This is set automatically on first run. You can override it in Settings > ZotSeek.
+
+### Paragraph-Based Chunking
+
+The `maxTokens` setting is a **ceiling, not a target**. The chunker:
+
+1. Splits text at paragraph boundaries (`\n\n`)
+2. Accumulates paragraphs into a chunk
+3. Flushes when adding another paragraph would exceed `maxTokens`
+4. **Never splits a paragraph across chunks**
+
+```
+Example with maxTokens=800:
+
+Paragraph 1: 200 tokens  ─┐
+Paragraph 2: 350 tokens   ├─► Chunk 1 (550 tokens)
+                         ─┘
+Paragraph 3: 400 tokens  ─┐
+                          ├─► Chunk 2 (400 tokens) ← under limit, that's OK
+                         ─┘
+Paragraph 4: 900 tokens  ─┐
+                          ├─► Chunk 3 (900 tokens) ← exceeds limit, but kept whole
+                         ─┘
+```
+
+A chunk might be 400 tokens if that's where the paragraph ends naturally. Paragraphs larger than `maxTokens` are kept whole (not split mid-sentence).
+
+### Token Estimation
+
+Tokens are estimated at ~1.3 tokens per word for English academic text:
+
+```
+1000 words ≈ 1300 tokens ≈ 6000 characters
+```
+
+| maxTokens | Approximate Size |
+|-----------|------------------|
+| 500 | ~385 words, ~1500 chars |
+| 800 | ~615 words, ~2400 chars |
+| 2000 | ~1540 words, ~6000 chars |
+
+### Chunk Overlap
+
+Currently, there is **no overlap** between chunks. Each paragraph belongs to exactly one chunk.
+
+The paper title is prepended to each chunk for embedding context, but this is for retrieval quality, not overlap.
+
+**Why no overlap?**
+- Keeps index size predictable
+- Paragraphs are natural semantic boundaries in academic writing
+- Avoids duplicate matches for the same content
+
+Overlap is common in RAG systems (e.g., LangChain defaults to ~200 token overlap) and could be added as a future enhancement for cases where important information spans paragraph boundaries.
+
+---
+
 ## Section-Aware Chunking
 
 ### Academic Paper Structure
@@ -482,17 +570,19 @@ Once a references header is detected, all remaining pages are skipped. Individua
 
 ### Performance-Optimized Chunking
 
-Embedding time scales **O(n²)** with sequence length due to attention computation:
+See [Chunking Strategy](#chunking-strategy) for detailed trade-offs. Summary:
 
-| Chunk Size | Time per Chunk | Total for Paper |
-|------------|----------------|-----------------|
-| 7000 tokens (~24K chars) | ~45 seconds | ~45 seconds |
-| 2000 tokens (~6K chars) | ~3 seconds | ~12 seconds (4 chunks) |
+| Chunk Size | Time per Chunk | Notes |
+|------------|----------------|-------|
+| 7000 tokens | ~45 seconds | Too slow for practical use |
+| 2000 tokens | ~3 seconds | Default for Zotero 8 |
+| 800 tokens | ~0.5 seconds | Default for Zotero 7 |
+| 500 tokens | ~0.3 seconds | Fastest, highest precision |
 
-**Current settings:**
-- `maxTokens: 2000` (~6000 characters)
-- `maxChunks: 8` per paper
-- Paragaph-aware splitting within sections
+**Default settings:**
+- `maxTokens`: 800 (Zotero 7) / 2000 (Zotero 8) — version-aware
+- `maxChunksPerPaper`: 100 — covers most full papers
+- Paragraph-aware splitting (never splits mid-paragraph)
 
 ---
 
@@ -617,9 +707,9 @@ Maximum: 1.00 (100%)
 
 | Preference | Default | Description |
 |------------|---------|-------------|
-| `indexingMode` | `"abstract"` | `"abstract"` or `"full"` |
-| `maxTokens` | `2000` | Max tokens per chunk |
-| `maxChunksPerPaper` | `8` | Max chunks per paper |
+| `indexingMode` | `"full"` | `"abstract"` or `"full"` |
+| `maxTokens` | 800 / 2000 | Max tokens per chunk (version-aware: 800 on Zotero 7, 2000 on Zotero 8) |
+| `maxChunksPerPaper` | `100` | Max chunks per paper |
 
 ---
 

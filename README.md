@@ -190,8 +190,8 @@ For technical details, see [docs/SEARCH_ARCHITECTURE.md](docs/SEARCH_ARCHITECTUR
 
 | Mode | What Gets Indexed | Best For |
 |------|-------------------|----------|
-| **Abstract** (default) | Title + Abstract | Fast indexing, most use cases |
-| **Full Document** | PDF content split by sections | Deep content search |
+| **Abstract** | Title + Abstract | Fast indexing, quick setup |
+| **Full Document** (default) | PDF content split by sections | Deep content search, better results |
 
 Configure via **Zotero → Settings → ZotSeek**.
 
@@ -213,6 +213,25 @@ The chunker automatically detects and excludes bibliography sections:
 - Stops indexing once references section is detected
 
 This keeps your search results focused on the actual content of papers.
+
+### Chunk Size Trade-offs
+
+The `maxTokens` setting controls how text is split for embedding. It's a **ceiling, not a target** — chunks are split at paragraph boundaries and may be smaller.
+
+| Chunk Size | Speed | Search Behavior |
+|------------|-------|-----------------|
+| **500-800** | Fast (~0.5s/chunk) | Higher precision, finds specific passages |
+| **2000** | Moderate (~3s/chunk) | Balanced (default for Zotero 8) |
+| **4000+** | Slow | Higher recall, finds broad topics |
+
+**Version-aware defaults:** Zotero 7 uses 800 tokens (slower Firefox engine), Zotero 8 uses 2000 tokens.
+
+**Recommendations:**
+- Large libraries with full-paper indexing: use defaults
+- Finding specific methodologies: try 500-600
+- Broad topic discovery: try 2000-3000
+
+For detailed chunking documentation, see [docs/SEARCH_ARCHITECTURE.md](docs/SEARCH_ARCHITECTURE.md#chunking-strategy).
 
 ---
 
@@ -452,9 +471,9 @@ Preferences are stored in Zotero's preferences system:
 
 | Preference | Default | Description |
 |------------|---------|-------------|
-| `zotseek.indexingMode` | `"abstract"` | `"abstract"` or `"full"` |
-| `zotseek.maxTokens` | `2000` | Max tokens per chunk (optimized for speed) |
-| `zotseek.maxChunksPerPaper` | `8` | Max chunks per paper |
+| `zotseek.indexingMode` | `"full"` | `"abstract"` or `"full"` |
+| `zotseek.maxTokens` | 800 / 2000 | Max tokens per chunk (800 on Zotero 7, 2000 on Zotero 8) |
+| `zotseek.maxChunksPerPaper` | `100` | Max chunks per paper |
 
 **Hybrid Search Settings:**
 
@@ -489,7 +508,7 @@ Tested on MacBook Pro M3:
 
 The plugin includes several performance optimizations:
 
-1. **Optimized Chunk Size** - 2000 tokens (~3s) vs 7000 tokens (~45s) due to O(n²) attention
+1. **Version-Aware Chunk Size** - 800 tokens on Zotero 7 (~0.5s), 2000 tokens on Zotero 8 (~3s) — avoids O(n²) attention bottleneck
 2. **In-Memory Caching** - Embeddings cached after first search
 3. **Pre-normalized Vectors** - Float32Arrays normalized on load for fast dot product
 4. **Parallel Searches** - Semantic and keyword searches run simultaneously
