@@ -21,16 +21,21 @@ export interface StableProgressOptions {
 }
 
 /**
- * Stable progress window that doesn't crash or resize
+ * Stable progress window with dynamic height sizing
  */
 export class StableProgressWindow {
   private progressWindow: any;
+  private progressWin: any = null; // The actual window object
   private logger: Logger;
   private cancelled = false;
   private cancelCallback?: () => void;
   private currentLine: any;
   private startTime: number;
   private title: string;
+
+  // Track checkpoint lines for reverse-order display (newest first)
+  private checkpointTexts: string[] = [];
+  private checkpointStartIndex: number = -1; // Index of first checkpoint line in toolkit's lines array
   
   constructor(options: StableProgressOptions) {
     this.logger = new Logger('StableProgress');
@@ -55,10 +60,21 @@ export class StableProgressWindow {
       // Show the window
       this.progressWindow.show();
 
-      // Resize the window to be taller (Zotero's default is too short for multiple status lines)
-      // and try to make it not always on top
-      this.resizeWindow(350, 320);
-      this.adjustWindowLevel();
+      // Resize the window after it loads
+      // Must use setTimeout because the window isn't ready immediately after show()
+      const Z = (globalThis as any).Zotero;
+      const mainWindow = Z?.getMainWindow?.();
+
+      const doInitialResize = () => {
+        this.ensureSize();
+      };
+
+      // Use the main window's setTimeout for reliable execution
+      if (mainWindow?.setTimeout) {
+        mainWindow.setTimeout(doInitialResize, 100);
+      } else if (typeof setTimeout !== 'undefined') {
+        setTimeout(doInitialResize, 100);
+      }
 
       this.logger.debug(`Progress window created: ${options.title}`);
     } catch (error) {
@@ -87,6 +103,7 @@ export class StableProgressWindow {
           text: fullText,
           progress: percent ?? 0,
         });
+        this.ensureSize();
       } else {
         // Fallback to logging
         this.logger.info(`Progress: ${fullText} (${percent ?? 0}%)`);
@@ -116,7 +133,7 @@ export class StableProgressWindow {
    */
   addLine(text: string, icon?: 'chrome://zotero/skin/tick.png' | 'chrome://zotero/skin/cross.png'): void {
     if (this.cancelled) return;
-    
+
     try {
       // Determine type based on icon
       let type: 'default' | 'success' | 'fail' = 'default';
@@ -125,7 +142,7 @@ export class StableProgressWindow {
       } else if (icon?.includes('cross')) {
         type = 'fail';
       }
-      
+
       // Create a new line for status messages
       if (this.progressWindow) {
         this.progressWindow.createLine({
@@ -133,11 +150,69 @@ export class StableProgressWindow {
           type,
           progress: 100,
         });
+        this.ensureSize();
       } else {
         this.logger.info(`Status: ${text}`);
       }
     } catch (error) {
       this.logger.error('Failed to add line:', error);
+    }
+  }
+
+  /**
+   * Add a checkpoint line in reverse order (newest first)
+   * This keeps the most recent checkpoint visible at the top of the checkpoint section
+   */
+  addCheckpointLine(text: string): void {
+    if (this.cancelled) return;
+
+    try {
+      if (!this.progressWindow) {
+        this.logger.info(`Checkpoint: ${text}`);
+        return;
+      }
+
+      // Add the new checkpoint text to our tracking array
+      this.checkpointTexts.push(text);
+
+      // First checkpoint: just create a line and record its index
+      if (this.checkpointTexts.length === 1) {
+        this.checkpointStartIndex = this.progressWindow.lines?.length || 0;
+        this.progressWindow.createLine({
+          text,
+          type: 'success',
+          progress: 100,
+        });
+        this.ensureSize();
+        return;
+      }
+
+      // Subsequent checkpoints: create new line, then shift all checkpoint texts
+      // so newest appears first
+      this.progressWindow.createLine({
+        text: '', // Will be filled by the update below
+        type: 'success',
+        progress: 100,
+      });
+
+      // Update all checkpoint lines with texts in reverse order (newest first)
+      const numCheckpoints = this.checkpointTexts.length;
+      for (let i = 0; i < numCheckpoints; i++) {
+        // Line index in toolkit's array
+        const lineIdx = this.checkpointStartIndex + i;
+        // Text index: reverse order (newest first)
+        const textIdx = numCheckpoints - 1 - i;
+
+        this.progressWindow.changeLine({
+          idx: lineIdx,
+          text: this.checkpointTexts[textIdx],
+          type: 'success',
+          progress: 100,
+        });
+      }
+      this.ensureSize();
+    } catch (error) {
+      this.logger.error('Failed to add checkpoint line:', error);
     }
   }
   
@@ -155,7 +230,8 @@ export class StableProgressWindow {
           type: 'success',
           progress: 100,
         });
-        
+        this.ensureSize();
+
         // Auto-close after delay (15 seconds to allow reading stats)
         if (autoClose) {
           this.progressWindow.startCloseTimer(15000);
@@ -180,7 +256,8 @@ export class StableProgressWindow {
           type: 'fail',
           progress: 100,
         });
-        
+        this.ensureSize();
+
         // Keep error visible longer
         if (autoClose) {
           this.progressWindow.startCloseTimer(8000);
@@ -237,48 +314,97 @@ export class StableProgressWindow {
   }
 
   /**
-   * Resize the progress window to accommodate more status lines
+   * Get Services object from available sources
    */
-  private resizeWindow(width: number, height: number): void {
+  private getServices(): any {
     try {
-      // Find and resize the progress window
-      const windows = (Services as any).wm.getEnumerator(null);
-      while (windows.hasMoreElements()) {
-        const win = windows.getNext();
-        if (win.document?.title === 'Progress') {
-          win.resizeTo(width, height);
-          this.logger.debug(`Resized progress window to ${width}x${height}`);
-          break;
-        }
-      }
-    } catch (error) {
-      this.logger.debug('Could not resize progress window:', error);
+      const Z = (globalThis as any).Zotero;
+      const mainWindow = Z?.getMainWindow?.();
+      return mainWindow?.Services || (globalThis as any).Services;
+    } catch {
+      return null;
     }
   }
 
   /**
-   * Try to make the progress window not always on top
+   * Find and cache the progress window reference
    */
-  private adjustWindowLevel(): void {
+  private findProgressWindow(): any {
+    if (this.progressWin) return this.progressWin;
+
     try {
-      const windows = (Services as any).wm.getEnumerator(null);
+      const Svc = this.getServices();
+      if (!Svc?.wm) return null;
+      const windows = Svc.wm.getEnumerator(null);
       while (windows.hasMoreElements()) {
         const win = windows.getNext();
         if (win.document?.title === 'Progress') {
-          // Try to lower the window level so it doesn't float above all apps
-          // Note: This may not work on all platforms
-          if (win.document?.documentElement) {
-            win.document.documentElement.setAttribute('level', 'normal');
-          }
-          this.logger.debug('Adjusted progress window level');
-          break;
+          this.progressWin = win;
+          return win;
         }
       }
-    } catch (error) {
-      this.logger.debug('Could not adjust window level:', error);
+    } catch {
+      // Ignore errors
+    }
+    return null;
+  }
+
+  // Window size constraints
+  private readonly minHeight = 120;
+  private readonly maxHeight = 400;
+
+  /**
+   * Resize window to fit content and stay within main Zotero window bounds
+   */
+  private ensureSize(): void {
+    try {
+      const win = this.findProgressWindow();
+      if (!win) return;
+
+      const doc = win.document;
+      const Z = (globalThis as any).Zotero;
+      const mainWindow = Z?.getMainWindow?.();
+
+      // Calculate actual content height
+      const textBox = doc.getElementById('zotero-progress-text-box');
+      if (textBox) {
+        // Get all child item boxes and sum their heights
+        const items = textBox.querySelectorAll('.zotero-progress-item-hbox');
+        const headline = doc.getElementById('zotero-progress-text-headline');
+
+        let contentHeight = headline ? headline.getBoundingClientRect().height : 20;
+        items.forEach((item: Element) => {
+          contentHeight += (item as HTMLElement).getBoundingClientRect().height + 4; // 4px gap
+        });
+
+        // Add padding
+        let targetHeight = Math.ceil(contentHeight) + 40; // 40px padding for margins
+
+        // Clamp between min and max height
+        targetHeight = Math.max(this.minHeight, Math.min(this.maxHeight, targetHeight));
+
+        // Resize if different
+        if (win.outerHeight !== targetHeight) {
+          win.resizeTo(win.outerWidth, targetHeight);
+        }
+      }
+
+      // Ensure window stays within main Zotero window bounds
+      if (mainWindow) {
+        const mainBottom = mainWindow.screenY + mainWindow.outerHeight;
+        const winBottom = win.screenY + win.outerHeight;
+
+        // If progress window extends below main window, move it up
+        if (winBottom > mainBottom) {
+          const newY = mainBottom - win.outerHeight - 10; // 10px padding from bottom
+          win.moveTo(win.screenX, Math.max(mainWindow.screenY, newY));
+        }
+      }
+    } catch {
+      // Ignore resize/position errors
     }
   }
-  
+
   /**
    * Calculate and format ETA
    */

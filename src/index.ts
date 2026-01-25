@@ -942,7 +942,7 @@ class ZotSeekPlugin {
         totalChunksIndexed += batchEmbeddings.length;
 
         this.logger.info(`Checkpoint ${batchNumber}/${totalBatches}: Saved ${batchEmbeddings.length} chunks from ${extractedBatch.length} items`);
-        progressWindow.addLine(`✓ Checkpoint ${batchNumber}/${totalBatches}: ${extractedBatch.length} items, ${batchEmbeddings.length} chunks saved`);
+        progressWindow.addCheckpointLine(`✓ Checkpoint ${batchNumber}/${totalBatches}: ${extractedBatch.length} items, ${batchEmbeddings.length} chunks saved`);
       }
 
       // Store the indexing mode in metadata so we know what mode was used to build the index
