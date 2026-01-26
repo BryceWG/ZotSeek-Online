@@ -46,6 +46,12 @@ export class ZotSeekDialogVTable {
   // Item ID to exclude from results (e.g., the paper being read when using "Find Related Papers")
   private excludeItemId: number | undefined = undefined;
 
+  // Multi-query state
+  private queryCount: number = 1;  // Number of active query fields
+  private combineOperator: 'and' | 'or' = 'and';
+  private andFormula: 'min' | 'product' | 'average' = 'min';  // AND combination formula
+  private maxQueries: number = 4;  // Support up to 4 queries
+
   constructor() {
     this.logger = new Logger('ZotSeekDialogVTable');
     this.zoteroAPI = new ZoteroAPI();
@@ -107,56 +113,17 @@ export class ZotSeekDialogVTable {
 
       // Bind event handlers
       const searchBtn = doc.getElementById('zotseek-btn');
-      const queryInput = doc.getElementById('zotseek-query') as HTMLInputElement;
+      const query1Input = doc.getElementById('zotseek-query-1') as HTMLInputElement;
       const openBtn = doc.getElementById('zotseek-open-btn');
       const closeBtn = doc.getElementById('zotseek-close-btn');
 
       searchBtn?.addEventListener('click', () => this.performSearch());
 
-      // Add auto-search on input with debouncing
-      queryInput?.addEventListener('input', (e) => {
-        const query = (e.target as HTMLInputElement).value.trim();
-
-        // Clear existing timeout
-        if (this.searchTimeout) {
-          win.clearTimeout(this.searchTimeout);
-          this.searchTimeout = null;
-        }
-
-        // Don't search if query is empty
-        if (!query) {
-          this.setStatus(''); // Clear status when no query
-          // Clear results if query is cleared
-          this.rawResults = [];
-          this.displayedResults = [];
-          this.enrichedData.clear();
-          this.resultsTable?.setResults([]);
-          this.lastQuery = '';
-          return;
-        }
-
-        // Check minimum query length
-        if (query.length < this.minQueryLength) {
-          this.setStatus(`Type at least ${this.minQueryLength} characters...`);
-          return;
-        }
-
-        // Skip if same query and we have results
-        if (query === this.lastQuery && this.rawResults.length > 0) {
-          return;
-        }
-
-        // Set status to indicate we're waiting
-        this.setStatus('Searching in a moment...');
-
-        // Set new timeout for auto-search
-        this.searchTimeout = win.setTimeout(() => {
-          this.performSearch();
-        }, this.autoSearchDelay);
-      });
+      // Add auto-search on input with debouncing for query 1
+      query1Input?.addEventListener('input', (e) => this.onQueryInput(e));
 
       // Keep Enter key for immediate search
-      queryInput?.addEventListener('keypress', (e) => {
+      query1Input?.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !this.isSearching) {
           // Clear any pending auto-search
           if (this.searchTimeout) {
@@ -166,6 +133,53 @@ export class ZotSeekDialogVTable {
           this.performSearch();
         }
       });
+
+      // Multi-query UI handlers
+      const addQueryBtn = doc.getElementById('zotseek-add-query-btn');
+      addQueryBtn?.addEventListener('click', () => this.addQueryField());
+
+      // Combine operator dropdown
+      const operatorSelect = doc.getElementById('query-combine-operator');
+      operatorSelect?.addEventListener('command', (e) => {
+        this.combineOperator = (e.target as any).value as 'and' | 'or';
+        this.updateOperatorHint();
+        this.updateFormulaVisibility();
+        // Re-search if we have multiple queries with content
+        if (this.getActiveQueries().length > 1) {
+          this.lastQuery = '';  // Force re-search
+          this.performSearch();
+        }
+      });
+
+      // AND formula dropdown (only relevant when AND is selected)
+      const formulaSelect = doc.getElementById('query-and-formula');
+      formulaSelect?.addEventListener('command', (e) => {
+        this.andFormula = (e.target as any).value as 'min' | 'product' | 'average';
+        // Re-search if we have multiple queries with AND
+        if (this.combineOperator === 'and' && this.getActiveQueries().length > 1) {
+          this.lastQuery = '';  // Force re-search
+          this.performSearch();
+        }
+      });
+
+      // Bind input events for all query fields (2, 3, 4)
+      for (let i = 2; i <= this.maxQueries; i++) {
+        const queryInput = doc.getElementById(`zotseek-query-${i}`) as HTMLInputElement;
+        queryInput?.addEventListener('input', (e) => this.onQueryInput(e));
+        queryInput?.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter' && !this.isSearching) {
+            if (this.searchTimeout) {
+              win.clearTimeout(this.searchTimeout);
+              this.searchTimeout = null;
+            }
+            this.performSearch();
+          }
+        });
+
+        // Bind remove button for this query
+        const removeBtn = doc.getElementById(`zotseek-remove-query-${i}-btn`);
+        removeBtn?.addEventListener('click', () => this.removeQueryField(i));
+      }
 
       openBtn?.addEventListener('click', () => this.openSelected());
       closeBtn?.addEventListener('click', () => this.close());
@@ -246,10 +260,18 @@ export class ZotSeekDialogVTable {
         getGranularity: () => this.granularity,
         performSearch: () => this.performSearch(),  // For triggering search from opener
         setExcludeItemId: (id: number | undefined) => { this.excludeItemId = id; },  // For excluding current paper
+        addQueryField: () => this.addQueryField(),  // For adding another query
+        removeQueryField: (index?: number) => this.removeQueryField(index),  // For removing a query
+        setCombineOperator: (op: 'and' | 'or') => {
+          this.combineOperator = op;
+          const operatorSelect = doc.getElementById('query-combine-operator') as any;
+          if (operatorSelect) operatorSelect.value = op;
+          this.updateOperatorHint();
+        },
       };
 
       // Focus the input
-      queryInput?.focus();
+      query1Input?.focus();
 
       // Check for initial query and exclude item from window arguments (e.g., from PDF text selection)
       const windowArgs = (win as any).arguments?.[0];
@@ -262,8 +284,8 @@ export class ZotSeekDialogVTable {
         this.logger.info(`Will exclude item ${excludeItemId} from search results`);
       }
 
-      if (initialQuery && queryInput) {
-        queryInput.value = initialQuery;
+      if (initialQuery && query1Input) {
+        query1Input.value = initialQuery;
         const truncated = initialQuery.length > 50 ? initialQuery.substring(0, 50) + '...' : initialQuery;
         this.logger.info(`Pre-filling query from PDF selection: "${truncated}"`);
 
@@ -290,21 +312,21 @@ export class ZotSeekDialogVTable {
     if (!this.window || this.isSearching) return;
     const doc = this.window.document;
 
-    const queryInput = doc.getElementById('zotseek-query') as HTMLInputElement;
-    const query = queryInput?.value?.trim();
+    const activeQueries = this.getActiveQueries();
 
-    if (!query) {
-      this.setStatus(''); // Don't show error, user knows to enter query
+    if (activeQueries.length === 0) {
+      this.setStatus('');
       return;
     }
 
-    // Skip if same query as last search
-    if (query === this.lastQuery && this.rawResults.length > 0) {
+    // Build cache key and skip if same as last search
+    const queryCacheKey = this.buildQueryCacheKey();
+    if (queryCacheKey === this.lastQuery && this.rawResults.length > 0) {
       return;
     }
 
     this.isSearching = true;
-    this.lastQuery = query;
+    this.lastQuery = queryCacheKey;
     const searchBtn = doc.getElementById('zotseek-btn') as HTMLButtonElement;
     if (searchBtn) {
       searchBtn.disabled = true;
@@ -316,9 +338,8 @@ export class ZotSeekDialogVTable {
       this.setOpenButtonEnabled(false);
 
       // Show search mode in status
-      const modeLabel = this.searchMode === 'hybrid' ? 'Hybrid' : 
+      const modeLabel = this.searchMode === 'hybrid' ? 'Hybrid' :
                         this.searchMode === 'semantic' ? 'Semantic' : 'Keyword';
-      this.setStatus(`${modeLabel} search: Initializing...`);
 
       // Initialize search engine if needed (hybrid search will init as needed)
       if (this.searchMode !== 'keyword' && !searchEngine.isReady()) {
@@ -326,27 +347,15 @@ export class ZotSeekDialogVTable {
         await searchEngine.init();
       }
 
-      // Perform hybrid search
-      this.setStatus(`${modeLabel} search: Finding items...`);
-
       // Determine if we need all chunks (location mode) or aggregated results (section mode)
       const returnAllChunks = this.granularity === 'location';
 
-      // Use smart search (auto-adjusts weights) or regular search based on preference
-      if (this.searchMode === 'hybrid' && this.autoAdjustWeights) {
-        this.rawResults = await this.hybridSearch.smartSearch(query, {
-          finalTopK: returnAllChunks ? 150 : 50, // Get more results in location mode
-          minSimilarity: 0.2,
-          mode: this.searchMode,
-          returnAllChunks,
-        });
+      // Single query: use existing flow
+      if (activeQueries.length === 1) {
+        await this.performSingleQuerySearch(activeQueries[0], modeLabel, returnAllChunks);
       } else {
-        this.rawResults = await this.hybridSearch.search(query, {
-          finalTopK: returnAllChunks ? 150 : 50,
-          minSimilarity: 0.2,
-          mode: this.searchMode,
-          returnAllChunks,
-        });
+        // Multiple queries: run in parallel and combine
+        await this.performMultiQuerySearch(activeQueries, modeLabel, returnAllChunks);
       }
 
       // Filter out excluded item (e.g., the paper being read when using "Find Related Papers")
@@ -358,11 +367,10 @@ export class ZotSeekDialogVTable {
         }
       }
 
-      // In location mode, rawResults already has all chunks; in section mode, it's already aggregated
-      // Apply additional granularity filtering as safety measure
+      // Apply granularity filtering
       this.displayedResults = this.applyGranularity(this.rawResults);
 
-      // Update table with results (metadata is already populated by hybrid search)
+      // Update table with results
       await this.resultsTable?.setHybridResults(this.displayedResults);
 
       // Force a re-render
@@ -371,15 +379,15 @@ export class ZotSeekDialogVTable {
       }
 
       // Update status with detailed info
-      const statusMsg = this.buildStatusMessage();
+      const statusMsg = activeQueries.length === 1
+        ? this.buildStatusMessage()
+        : this.buildMultiQueryStatusMessage(activeQueries);
       this.setStatus(statusMsg);
 
       // Enable Find Pages button if we have results
       this.setFindPagesEnabled(this.displayedResults.length > 0);
 
-      // Keep focus on the search input
-      const searchInput = this.window?.document.getElementById('zotseek-query') as HTMLInputElement;
-      searchInput?.focus();
+      // Don't steal focus - let user continue typing in whichever field they're in
 
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -392,6 +400,72 @@ export class ZotSeekDialogVTable {
         searchBtn.textContent = 'Search';
       }
     }
+  }
+
+  /**
+   * Perform a single query search (original behavior)
+   */
+  private async performSingleQuerySearch(
+    query: string,
+    modeLabel: string,
+    returnAllChunks: boolean
+  ): Promise<void> {
+    this.setStatus(`${modeLabel} search: Finding items...`);
+
+    // Use smart search (auto-adjusts weights) or regular search based on preference
+    if (this.searchMode === 'hybrid' && this.autoAdjustWeights) {
+      this.rawResults = await this.hybridSearch.smartSearch(query, {
+        finalTopK: returnAllChunks ? 150 : 50,
+        minSimilarity: 0.2,
+        mode: this.searchMode,
+        returnAllChunks,
+      });
+    } else {
+      this.rawResults = await this.hybridSearch.search(query, {
+        finalTopK: returnAllChunks ? 150 : 50,
+        minSimilarity: 0.2,
+        mode: this.searchMode,
+        returnAllChunks,
+      });
+    }
+  }
+
+  /**
+   * Perform multi-query search with AND/OR combination
+   */
+  private async performMultiQuerySearch(
+    queries: string[],
+    modeLabel: string,
+    returnAllChunks: boolean
+  ): Promise<void> {
+    const opLabel = this.combineOperator.toUpperCase();
+    this.setStatus(`${modeLabel} search (${opLabel}): Finding items...`);
+
+    // Run searches for each query in parallel
+    const searchPromises = queries.map(query => {
+      if (this.searchMode === 'hybrid' && this.autoAdjustWeights) {
+        return this.hybridSearch.smartSearch(query, {
+          finalTopK: 100,  // Get more results for combining
+          minSimilarity: 0.15,  // Lower threshold, combination will filter
+          mode: this.searchMode,
+          returnAllChunks,
+        });
+      } else {
+        return this.hybridSearch.search(query, {
+          finalTopK: 100,
+          minSimilarity: 0.15,
+          mode: this.searchMode,
+          returnAllChunks,
+        });
+      }
+    });
+
+    const allResults = await Promise.all(searchPromises);
+
+    // Combine results using AND/OR logic
+    this.rawResults = this.combineMultiQueryResults(allResults, queries);
+
+    this.logger.info(`Multi-query search (${opLabel}): Combined ${allResults.map(r => r.length).join('+')} results into ${this.rawResults.length}`);
   }
   
   /**
@@ -494,9 +568,8 @@ export class ZotSeekDialogVTable {
     this.displayedResults = [];
     this.resultsTable?.setHybridResults([]);
 
-    // Trigger new search if there's a query
-    const queryInput = this.window?.document.getElementById('zotseek-query') as HTMLInputElement;
-    if (queryInput?.value?.trim()) {
+    // Trigger new search if there are any active queries
+    if (this.getActiveQueries().length > 0) {
       this.performSearch();
     }
   }
@@ -531,6 +604,354 @@ export class ZotSeekDialogVTable {
       this.displayedResults = [];
       await this.performSearch();
     }
+  }
+
+  // ==================== Multi-Query Methods ====================
+
+  /**
+   * Handle query input with debouncing (shared by all query fields)
+   */
+  private onQueryInput(e: Event): void {
+    const win = this.window;
+    if (!win) return;
+
+    // Clear existing timeout
+    if (this.searchTimeout) {
+      win.clearTimeout(this.searchTimeout);
+      this.searchTimeout = null;
+    }
+
+    const activeQueries = this.getActiveQueries();
+
+    // Don't search if no queries have content
+    if (activeQueries.length === 0) {
+      this.setStatus('');
+      this.rawResults = [];
+      this.displayedResults = [];
+      this.enrichedData.clear();
+      this.resultsTable?.setResults([]);
+      this.lastQuery = '';
+      return;
+    }
+
+    // Check minimum query length (at least one query should meet the minimum)
+    const hasValidQuery = activeQueries.some(q => q.length >= this.minQueryLength);
+    if (!hasValidQuery) {
+      this.setStatus(`Type at least ${this.minQueryLength} characters...`);
+      return;
+    }
+
+    // Build a cache key from all queries to check if we need to re-search
+    const queryCacheKey = this.buildQueryCacheKey();
+    if (queryCacheKey === this.lastQuery && this.rawResults.length > 0) {
+      return;
+    }
+
+    // Set status to indicate we're waiting
+    this.setStatus('Searching in a moment...');
+
+    // Set new timeout for auto-search
+    this.searchTimeout = win.setTimeout(() => {
+      this.performSearch();
+    }, this.autoSearchDelay);
+  }
+
+  /**
+   * Build a cache key from all active queries
+   */
+  private buildQueryCacheKey(): string {
+    const queries = this.getActiveQueries();
+    if (queries.length === 1) {
+      return queries[0];
+    }
+    // Include operator in key so changing AND/OR triggers re-search
+    return `${queries.join('|')}:${this.combineOperator}`;
+  }
+
+  /**
+   * Get all active queries (non-empty, from visible fields)
+   */
+  private getActiveQueries(): string[] {
+    const queries: string[] = [];
+    const doc = this.window?.document;
+    if (!doc) return queries;
+
+    for (let i = 1; i <= this.queryCount; i++) {
+      const input = doc.getElementById(`zotseek-query-${i}`) as HTMLInputElement;
+      const value = input?.value?.trim() || '';
+      if (value.length >= this.minQueryLength) {
+        queries.push(value);
+      }
+    }
+
+    return queries;
+  }
+
+  /**
+   * Add another query field (up to maxQueries)
+   */
+  private addQueryField(): void {
+    if (this.queryCount >= this.maxQueries) return;
+
+    this.queryCount++;
+    this.updateQueryFieldsVisibility();
+
+    // Focus the new field
+    const newInput = this.window?.document.getElementById(`zotseek-query-${this.queryCount}`) as HTMLInputElement;
+    newInput?.focus();
+
+    this.logger.info(`Added query field ${this.queryCount}`);
+  }
+
+  /**
+   * Remove a query field by index (2, 3, or 4)
+   * Shifts values from higher queries down to fill the gap
+   */
+  private removeQueryField(index?: number): void {
+    if (this.queryCount <= 1) return;
+
+    const doc = this.window?.document;
+    if (!doc) return;
+
+    // If no index specified, remove the last query
+    const targetIndex = index ?? this.queryCount;
+
+    // Shift values from queries above this one down
+    // e.g., if removing query 2 of 4: query3→query2, query4→query3
+    for (let i = targetIndex; i < this.queryCount; i++) {
+      const currentInput = doc.getElementById(`zotseek-query-${i}`) as HTMLInputElement;
+      const nextInput = doc.getElementById(`zotseek-query-${i + 1}`) as HTMLInputElement;
+      if (currentInput && nextInput) {
+        currentInput.value = nextInput.value;
+      }
+    }
+
+    // Clear the last query field (which is now either removed or duplicated)
+    const lastInput = doc.getElementById(`zotseek-query-${this.queryCount}`) as HTMLInputElement;
+    if (lastInput) {
+      lastInput.value = '';
+    }
+
+    this.queryCount--;
+    this.updateQueryFieldsVisibility();
+
+    // Re-search with remaining queries
+    this.lastQuery = '';
+    this.performSearch();
+
+    this.logger.info(`Removed query field ${targetIndex}, now have ${this.queryCount} queries`);
+  }
+
+  /**
+   * Update visibility of query fields based on queryCount
+   */
+  private updateQueryFieldsVisibility(): void {
+    const doc = this.window?.document;
+    if (!doc) return;
+
+    const hasMultipleQueries = this.queryCount > 1;
+
+    // Show/hide operator row
+    const operatorRow = doc.getElementById('query-operator-row') as HTMLElement;
+    if (operatorRow) {
+      operatorRow.style.display = hasMultipleQueries ? '' : 'none';
+    }
+
+    // Show/hide query rows 2-4 based on queryCount
+    for (let i = 2; i <= this.maxQueries; i++) {
+      const queryRow = doc.getElementById(`query-row-${i}`) as HTMLElement;
+      if (queryRow) {
+        queryRow.style.display = i <= this.queryCount ? '' : 'none';
+      }
+    }
+
+    // Hide add button if max queries reached
+    const addBtn = doc.getElementById('zotseek-add-query-btn') as HTMLElement;
+    if (addBtn) {
+      addBtn.style.display = this.queryCount >= this.maxQueries ? 'none' : '';
+    }
+
+    // Update operator hint text
+    this.updateOperatorHint();
+
+    // Update formula visibility based on operator
+    this.updateFormulaVisibility();
+  }
+
+  /**
+   * Update the operator hint text based on current selection and query count
+   */
+  private updateOperatorHint(): void {
+    const doc = this.window?.document;
+    if (!doc) return;
+
+    const hintLabel = doc.getElementById('query-operator-hint');
+    if (hintLabel) {
+      const queryWord = this.queryCount > 2 ? 'all queries' : 'both queries';
+      const text = this.combineOperator === 'and'
+        ? `— results must match ${queryWord}`
+        : '— results can match any query';
+      // XUL labels use 'value' attribute - clear both to ensure clean update
+      hintLabel.textContent = '';
+      hintLabel.setAttribute('value', text);
+    }
+  }
+
+  /**
+   * Show/hide the AND formula selector based on operator
+   */
+  private updateFormulaVisibility(): void {
+    const doc = this.window?.document;
+    if (!doc) return;
+
+    const formulaContainer = doc.getElementById('query-formula-container');
+    if (formulaContainer) {
+      (formulaContainer as HTMLElement).style.display =
+        this.combineOperator === 'and' ? '' : 'none';
+    }
+  }
+
+  /**
+   * Combine results from multiple queries using AND/OR logic
+   */
+  private combineMultiQueryResults(
+    allResults: HybridSearchResult[][],
+    queries: string[]
+  ): HybridSearchResult[] {
+    // Build map: itemId -> scores from each query
+    const itemScores = new Map<number, {
+      results: (HybridSearchResult | null)[],
+      scores: (number | null)[]
+    }>();
+
+    // Collect all results by itemId
+    allResults.forEach((results, queryIndex) => {
+      for (const result of results) {
+        if (!itemScores.has(result.itemId)) {
+          itemScores.set(result.itemId, {
+            results: new Array(queries.length).fill(null),
+            scores: new Array(queries.length).fill(null)
+          });
+        }
+        const entry = itemScores.get(result.itemId)!;
+        entry.results[queryIndex] = result;
+        // Use semanticScore for combination (more meaningful than RRF for cross-query)
+        entry.scores[queryIndex] = result.semanticScore ?? result.rrfScore ?? 0;
+      }
+    });
+
+    // Combine scores based on operator
+    const combinedResults: HybridSearchResult[] = [];
+    const minThreshold = 0.15;  // Lower threshold since combination will filter further
+
+    for (const [itemId, { results, scores }] of itemScores) {
+      const validScores = scores.filter((s): s is number => s !== null);
+
+      if (validScores.length === 0) continue;
+
+      let combinedScore: number;
+      let meetsThreshold: boolean;
+
+      if (this.combineOperator === 'and') {
+        // AND: All queries should have results
+        if (validScores.length < queries.length) {
+          // Item doesn't match all queries - skip for strict AND
+          continue;
+        }
+        // Apply selected AND formula
+        combinedScore = this.applyAndFormula(validScores);
+        meetsThreshold = combinedScore >= minThreshold;
+      } else {
+        // OR: Any query match counts, use MAX score
+        combinedScore = Math.max(...validScores);
+        meetsThreshold = combinedScore >= minThreshold;
+      }
+
+      if (!meetsThreshold) continue;
+
+      // Use the result from the query with the best score
+      const bestIndex = scores.findIndex(s => s === Math.max(...validScores));
+      const bestResult = results[bestIndex] ?? results.find(r => r !== null)!;
+
+      // Create combined result with updated scores and per-query scores for tooltip
+      combinedResults.push({
+        ...bestResult,
+        semanticScore: combinedScore,
+        rrfScore: combinedScore,
+        queryScores: scores.map(s => s ?? 0),  // Store per-query scores for tooltip
+      });
+    }
+
+    // Sort by combined score descending
+    combinedResults.sort((a, b) => (b.semanticScore ?? 0) - (a.semanticScore ?? 0));
+
+    return combinedResults.slice(0, 50);  // Return top 50
+  }
+
+  /**
+   * Apply the selected AND formula to combine scores
+   * - min: Minimum score (strict - paper must be good for all queries)
+   * - product: Multiply scores (penalizes if any query is weak)
+   * - average: Average score (balanced approach)
+   */
+  private applyAndFormula(scores: number[]): number {
+    switch (this.andFormula) {
+      case 'min':
+        return Math.min(...scores);
+      case 'product':
+        // Product of scores, but scale back to 0-1 range
+        // For 2 scores: sqrt(a*b) = geometric mean
+        return Math.pow(scores.reduce((a, b) => a * b, 1), 1 / scores.length);
+      case 'average':
+        return scores.reduce((a, b) => a + b, 0) / scores.length;
+      default:
+        return Math.min(...scores);
+    }
+  }
+
+  /**
+   * Build status message for multi-query search
+   */
+  private buildMultiQueryStatusMessage(queries: string[]): string {
+    if (this.displayedResults.length === 0) {
+      if (this.combineOperator === 'and') {
+        return 'No items found matching all queries';
+      }
+      return 'No items found';
+    }
+
+    const opLabel = this.combineOperator.toUpperCase();
+    const truncatedQueries = queries.map(q =>
+      q.length > 20 ? q.substring(0, 20) + '...' : q
+    );
+
+    // Build query expression with formula indicator for AND
+    let queryExpr = truncatedQueries.join(` ${opLabel} `);
+    if (this.combineOperator === 'and') {
+      const formulaLabels: Record<string, string> = {
+        min: 'min',
+        product: 'prod',
+        average: 'avg'
+      };
+      queryExpr += ` [${formulaLabels[this.andFormula]}]`;
+    }
+
+    let msg = `Found ${this.displayedResults.length} items (${queryExpr})`;
+
+    // Add source breakdown for hybrid mode
+    if (this.searchMode === 'hybrid') {
+      let bothCount = 0, semanticCount = 0, keywordCount = 0;
+      for (const r of this.displayedResults) {
+        if (r.source === 'both') bothCount++;
+        else if (r.source === 'semantic') semanticCount++;
+        else keywordCount++;
+      }
+      if (bothCount > 0) {
+        msg += ` (🔗 ${bothCount} · 🧠 ${semanticCount} · 🔤 ${keywordCount})`;
+      }
+    }
+
+    return msg;
   }
 
   /**
@@ -742,6 +1163,9 @@ export class ZotSeekDialogVTable {
     this.window = null;
     this.lastQuery = '';
     this.excludeItemId = undefined;  // Reset excluded item
+    this.queryCount = 1;  // Reset to single query mode
+    this.combineOperator = 'and';  // Reset operator
+    this.andFormula = 'min';  // Reset formula
     this.logger.info('Search dialog cleaned up');
   }
 }

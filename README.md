@@ -15,6 +15,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - 🔍 **Find Similar Documents** - Right-click any paper → discover related research
 - 📖 **Search from PDF Selection** - Select text while reading → right-click → find documents about that concept
 - 🔎 **Natural Language Search** - Search with queries like "machine learning in healthcare"
+- 🔀 **Multi-Query Search** - Combine up to 4 queries with AND/OR logic to find topic intersections
 - 🔗 **Hybrid Search** - Combines AI + keyword search for best results
 - ⚡ **Lightning Fast** - Searches complete in <100ms
 - 📑 **Section-Aware** - See which section matched (Abstract, Methods, Results)
@@ -182,6 +183,30 @@ When using **Full Document** indexing mode, you can toggle between two result vi
 ![By Location Mode](docs/images/search-dialog-by-location.png)
 
 In **By Location** mode, clicking a result opens the PDF to the exact page where the match was found.
+
+### Multi-Query Search
+
+Combine up to 4 search queries to find papers at the intersection of multiple topics:
+
+1. Click the **"+"** button next to the search field to add more queries
+2. Choose **AND** or **OR** to combine results
+3. For AND mode, select a combination formula
+
+| Operator | Behavior | Best For |
+|----------|----------|----------|
+| **AND** | Papers must match ALL queries | Finding topic intersections |
+| **OR** | Papers can match ANY query | Broadening search with synonyms |
+
+| AND Formula | How It Works | Use When |
+|-------------|--------------|----------|
+| **Minimum** (default) | Uses lowest score across queries | You want strict intersection |
+| **Product** | Geometric mean of scores | Balanced relevance across all queries |
+| **Average** | Arithmetic mean of scores | More lenient matching |
+
+**Example:** Search for papers about "machine learning" AND "healthcare" AND "ethics" to find AI ethics papers specifically in the medical domain.
+
+**Match column with multiple queries:** Shows combined score plus individual per-query scores:
+- `73% (77|73|68)` = 73% combined, with 77% for Q1, 73% for Q2, 68% for Q3
 
 For technical details, see [docs/SEARCH_ARCHITECTURE.md](docs/SEARCH_ARCHITECTURE.md).
 
@@ -440,9 +465,10 @@ ZotSeek can automatically index papers as you add them to your library:
 1. Click the **ZotSeek button** in the toolbar (🔍✨)
 2. Or right-click → **"Open ZotSeek..."**
 3. Enter a natural language query (e.g., "machine learning for medical diagnosis")
-4. View results ranked by semantic similarity
-5. Double-click any result to open it in Zotero
-6. Click **⚙ Settings** (bottom-left) to quickly access ZotSeek preferences
+4. **Optional:** Click "+" to add more queries (up to 4) and combine with AND/OR
+5. View results ranked by semantic similarity
+6. Double-click any result to open it in Zotero
+7. Click **⚙ Settings** (bottom-left) to quickly access ZotSeek preferences
 
 ### View Debug Output
 

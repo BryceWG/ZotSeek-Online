@@ -9,7 +9,7 @@
   xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   xmlns:html="http://www.w3.org/1999/xhtml"
   title="ZotSeek"
-  width="900"
+  width="1000"
   height="600"
   persist="width,height,screenX,screenY">
 
@@ -21,21 +21,90 @@
   <script type="application/javascript" src="chrome://zotseek/content/scripts/search-dialog-vtable.js"/>
 
   <vbox flex="1" style="padding: 10px;">
-    <!-- Search Input Row -->
-    <hbox align="center" style="margin-bottom: 8px;">
-      <label value="Search:" style="margin-right: 8px; min-width: 50px;"/>
-      <html:input 
-        id="zotseek-query" 
-        type="text" 
-        placeholder="Enter your search query (auto-searches as you type)..."
-        style="flex: 1; padding: 6px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px;"
-      />
-      <button id="zotseek-btn" label="Search" style="margin-left: 8px;"/>
-    </hbox>
+    <!-- Search Queries Container -->
+    <vbox id="search-queries-container">
+      <!-- Query 1 (always visible) -->
+      <hbox id="query-row-1" class="query-row" align="center" style="margin-bottom: 4px;">
+        <label value="Search:" class="query-label"/>
+        <html:input
+          id="zotseek-query-1"
+          class="zotseek-query-input"
+          type="text"
+          placeholder="Enter your search query (auto-searches as you type)..."
+        />
+        <button id="zotseek-add-query-btn" label="+" tooltiptext="Add another query for AND/OR combination" class="query-action-btn"/>
+        <button id="zotseek-btn" label="Search" style="margin-left: 8px;"/>
+      </hbox>
+
+      <!-- Operator row (hidden by default, shown when 2+ queries) -->
+      <hbox id="query-operator-row" align="center" style="margin: 4px 0; display: none;">
+        <label value="" class="query-label"/>
+        <menulist id="query-combine-operator" style="min-width: 70px;">
+          <menupopup>
+            <menuitem value="and" label="AND"/>
+            <menuitem value="or" label="OR"/>
+          </menupopup>
+        </menulist>
+        <!-- AND formula selector (only visible when AND is selected) -->
+        <hbox id="query-formula-container" align="center" style="margin-left: 8px;">
+          <label value="using" style="color: #888; font-size: 11px; margin-right: 4px;"/>
+          <menulist id="query-and-formula" style="min-width: 90px; font-size: 11px;">
+            <menupopup>
+              <menuitem value="min" label="Minimum"/>
+              <menuitem value="product" label="Product"/>
+              <menuitem value="average" label="Average"/>
+            </menupopup>
+          </menulist>
+        </hbox>
+        <label id="query-operator-hint" value="— results must match both queries" style="margin-left: 8px; color: #888; font-size: 11px;"/>
+      </hbox>
+
+      <!-- Query 2 (hidden by default) -->
+      <hbox id="query-row-2" class="query-row" align="center" style="margin-bottom: 4px; display: none;">
+        <label value="Query 2:" class="query-label" style="color: #666;"/>
+        <html:input
+          id="zotseek-query-2"
+          class="zotseek-query-input"
+          type="text"
+          placeholder="Enter query 2..."
+        />
+        <button id="zotseek-remove-query-2-btn" label="✕" tooltiptext="Remove this query" class="query-action-btn query-remove-btn"/>
+        <!-- Spacer to match Search button width -->
+        <button label="Search" style="margin-left: 8px; visibility: hidden;"/>
+      </hbox>
+
+      <!-- Query 3 (hidden by default) -->
+      <hbox id="query-row-3" class="query-row" align="center" style="margin-bottom: 4px; display: none;">
+        <label value="Query 3:" class="query-label" style="color: #666;"/>
+        <html:input
+          id="zotseek-query-3"
+          class="zotseek-query-input"
+          type="text"
+          placeholder="Enter query 3..."
+        />
+        <button id="zotseek-remove-query-3-btn" label="✕" tooltiptext="Remove this query" class="query-action-btn query-remove-btn"/>
+        <!-- Spacer to match Search button width -->
+        <button label="Search" style="margin-left: 8px; visibility: hidden;"/>
+      </hbox>
+
+      <!-- Query 4 (hidden by default) -->
+      <hbox id="query-row-4" class="query-row" align="center" style="margin-bottom: 4px; display: none;">
+        <label value="Query 4:" class="query-label" style="color: #666;"/>
+        <html:input
+          id="zotseek-query-4"
+          class="zotseek-query-input"
+          type="text"
+          placeholder="Enter query 4..."
+        />
+        <button id="zotseek-remove-query-4-btn" label="✕" tooltiptext="Remove this query" class="query-action-btn query-remove-btn"/>
+        <!-- Spacer to match Search button width -->
+        <button label="Search" style="margin-left: 8px; visibility: hidden;"/>
+      </hbox>
+    </vbox>
     
     <!-- Search Mode Toggle -->
     <hbox id="search-mode-row" align="center" style="margin-bottom: 8px;">
-      <label value="Mode:" style="margin-right: 8px; min-width: 50px; color: #666;"/>
+      <label value="Mode:" class="query-label" style="color: #666;"/>
       <menulist id="search-mode-select" style="min-width: 180px;">
         <menupopup>
           <menuitem value="hybrid" label="🔗 Hybrid (Recommended)"/>
@@ -48,7 +117,7 @@
 
     <!-- Results Granularity Toggle -->
     <hbox id="granularity-row" align="center" style="margin-bottom: 8px;">
-      <label value="Results:" style="margin-right: 8px; min-width: 50px; color: #666;"/>
+      <label value="Results:" class="query-label" style="color: #666;"/>
       <hbox align="center" style="gap: 16px;">
         <html:label style="display: flex; align-items: center; cursor: pointer;">
           <html:input type="radio" name="granularity" id="granularity-section" value="section" checked="checked" style="margin-right: 4px;"/>

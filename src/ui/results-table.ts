@@ -44,7 +44,7 @@ const DEFAULT_COLUMNS: ResultsTableColumn[] = [
     dataKey: 'similarity',
     label: 'Match',
     staticWidth: true,
-    width: 70,
+    width: 110,  // Wider to fit per-query scores like "73% (77|77)"
     hidden: false,
   },
   {
@@ -243,7 +243,15 @@ export class SearchResultsTable {
       const hybridResult = result as HybridSearchResult;
       if (hybridResult.semanticScore !== null) {
         // Show semantic similarity score (0-100%)
-        formattedSimilarity = `${Math.round(hybridResult.semanticScore * 100)}%`;
+        const mainScore = `${Math.round(hybridResult.semanticScore * 100)}%`;
+
+        // If we have per-query scores, show them in a compact format
+        if (hybridResult.queryScores && hybridResult.queryScores.length > 1) {
+          const queryPcts = hybridResult.queryScores.map(s => Math.round(s * 100));
+          formattedSimilarity = `${mainScore} (${queryPcts.join('|')})`;
+        } else {
+          formattedSimilarity = mainScore;
+        }
       } else if (hybridResult.keywordScore !== null) {
         // Show keyword relevance score for keyword-only results
         formattedSimilarity = `${Math.round(hybridResult.keywordScore * 100)}%`;

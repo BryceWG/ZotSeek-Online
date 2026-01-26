@@ -360,6 +360,52 @@
   background: #d1e7fd !important;
 }
 
+/* Multi-Query Styles */
+#search-queries-container {
+  margin-bottom: 8px;
+}
+
+.query-row {
+  margin-bottom: 4px;
+}
+
+/* Consistent label width for alignment */
+.query-label {
+  min-width: 55px;
+  margin-right: 8px;
+}
+
+.zotseek-query-input {
+  flex: 1;
+  padding: 6px;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+#query-operator-row {
+  padding: 4px 0;
+}
+
+#query-combine-operator {
+  font-weight: 600;
+}
+
+/* Action buttons (+ and ✕) */
+.query-action-btn {
+  min-width: 28px;
+  margin-left: 4px;
+  padding: 4px 8px;
+}
+
+#zotseek-add-query-btn:hover {
+  background: #e8f5e9;
+}
+
+#zotseek-remove-query-2-btn:hover {
+  background: #ffebee;
+}
+
 /* Search Mode Selector */
 #search-mode-row {
   padding: 4px 0;
@@ -528,5 +574,24 @@
   #similar-documents-results-container .tree-header .cell.sorted-ascending::after,
   #similar-documents-results-container .tree-header .cell.sorted-descending::after {
     color: #64B5F6;
+  }
+
+  /* Dark mode: Multi-query styles */
+  .zotseek-query-input {
+    background: var(--material-background, #2a2a2a);
+    border-color: #444;
+    color: #e0e0e0;
+  }
+
+  #query-operator-hint {
+    color: #888;
+  }
+
+  #zotseek-add-query-btn:hover {
+    background: rgba(76, 175, 80, 0.2);
+  }
+
+  #zotseek-remove-query-2-btn:hover {
+    background: rgba(244, 67, 54, 0.2);
   }
 }

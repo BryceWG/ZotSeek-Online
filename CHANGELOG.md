@@ -2,6 +2,32 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [1.7.0] - 2026-01-26
+
+### Added
+- **Multi-Query Search** - Combine up to 4 search queries with AND/OR logic
+  - Click "+" to add additional query fields (up to 4 total)
+  - **AND mode**: Find papers matching ALL queries (intersection)
+  - **OR mode**: Find papers matching ANY query (union)
+  - Three AND combination formulas: Minimum (strict), Product (balanced), Average (lenient)
+  - Per-query scores shown in Match column: e.g., "73% (77|73|68)" shows combined score and individual scores
+  - Great for finding papers at the intersection of multiple topics
+
+### Changed
+- **Improved Progress Window** - Dynamic sizing and better checkpoint display
+  - Dynamic height that adjusts to content (min: 120px, max: 400px)
+  - Checkpoint messages now display in reverse order (newest first)
+  - Window stays within main Zotero window bounds
+
+### Technical
+- Added `queryCount` state management for dynamic query fields
+- Implemented parallel search execution with `Promise.all()` for multi-query
+- Score combination using configurable formulas (min, geometric mean, average)
+- Extended `HybridSearchResult` interface with `queryScores` array for per-query tracking
+- Query removal shifts values to maintain contiguity (removing Q2 of 4 shifts Q3→Q2, Q4→Q3)
+
+---
+
 ## [1.6.0] - 2026-01-24
 
 ### Added

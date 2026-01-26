@@ -48,6 +48,9 @@ export interface HybridSearchResult {
   // Location information from matched chunk
   pageNumber?: number;        // 1-based page number
   paragraphIndex?: number;    // 0-based paragraph index within page
+
+  // Multi-query scores (for tooltip display in multi-query search)
+  queryScores?: number[];     // Individual scores from each query
 }
 
 export interface HybridSearchOptions {

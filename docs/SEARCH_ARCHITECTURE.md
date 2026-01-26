@@ -9,19 +9,22 @@ A comprehensive guide to how semantic and hybrid search works in ZotSeek.
 1. [Overview](#overview)
 2. [Search Modes](#search-modes)
 3. [Hybrid Search with RRF](#hybrid-search-with-rrf)
-4. [Semantic Search Pipeline](#semantic-search-pipeline)
+4. [Multi-Query Search](#multi-query-search)
+   - [AND/OR Combination](#andor-combination)
+   - [AND Combination Formulas](#and-combination-formulas)
+5. [Semantic Search Pipeline](#semantic-search-pipeline)
    - [MaxSim Aggregation](#maxsim-aggregation)
    - [Parent-Child Retrieval Pattern](#parent-child-retrieval-pattern)
-5. [Chunking Strategy](#chunking-strategy)
+6. [Chunking Strategy](#chunking-strategy)
    - [Trade-offs: Chunk Size Selection](#trade-offs-chunk-size-selection)
    - [Version-Aware Defaults](#version-aware-defaults)
    - [Paragraph-Based Chunking](#paragraph-based-chunking)
    - [Token Estimation](#token-estimation)
    - [Chunk Overlap](#chunk-overlap)
-6. [Section-Aware Chunking](#section-aware-chunking)
+7. [Section-Aware Chunking](#section-aware-chunking)
    - [References Filtering](#references-filtering)
-7. [Performance Optimizations](#performance-optimizations)
-8. [Query Analysis](#query-analysis)
+8. [Performance Optimizations](#performance-optimizations)
+9. [Query Analysis](#query-analysis)
 
 ---
 
@@ -205,6 +208,158 @@ RRF is a technique for combining ranked lists from different search systems with
 | 🔗 | Found by BOTH | High confidence - matches semantically AND by keywords |
 | 🧠 | Semantic only | Conceptually related but may use different terminology |
 | 🔤 | Keyword only | Exact match but not indexed for semantic search |
+
+---
+
+## Multi-Query Search
+
+ZotSeek supports combining up to 4 search queries with AND/OR logic to find papers at the intersection of multiple topics.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      MULTI-QUERY SEARCH ARCHITECTURE                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  USER INPUT:                                                                │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │ Query 1: "machine learning"                                           │ │
+│  │ Query 2: "healthcare"                                                 │ │
+│  │ Query 3: "ethics"                                                     │ │
+│  │ Operator: AND (Minimum formula)                                       │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                               │                                           │
+│                               ▼                                           │
+│  PARALLEL EXECUTION:                                                       │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐            │
+│  │ Search Q1       │  │ Search Q2       │  │ Search Q3       │            │
+│  │ "machine        │  │ "healthcare"    │  │ "ethics"        │            │
+│  │  learning"      │  │                 │  │                 │            │
+│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘            │
+│           │                    │                    │                      │
+│           ▼                    ▼                    ▼                      │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │ Paper A: [0.85, 0.72, 0.68]  ← scores from each query                 │ │
+│  │ Paper B: [0.91, 0.45, null]  ← missing Q3 = excluded by AND           │ │
+│  │ Paper C: [0.78, 0.81, 0.75]  ← all queries match                      │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                               │                                           │
+│                               ▼                                           │
+│  SCORE COMBINATION (AND with Minimum formula):                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │ Paper A: min(0.85, 0.72, 0.68) = 0.68                                 │ │
+│  │ Paper B: EXCLUDED (doesn't match all queries)                         │ │
+│  │ Paper C: min(0.78, 0.81, 0.75) = 0.75  ← HIGHEST                      │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                               │                                           │
+│                               ▼                                           │
+│  FINAL RANKING:                                                            │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │ 1. Paper C: 75% (78|81|75)  ← combined score (per-query scores)       │ │
+│  │ 2. Paper A: 68% (85|72|68)                                            │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### AND/OR Combination
+
+| Operator | Behavior | Result Set |
+|----------|----------|------------|
+| **AND** | Paper must match ALL queries | Intersection - stricter, fewer results |
+| **OR** | Paper can match ANY query | Union - broader, more results |
+
+**AND Mode:**
+- Only papers appearing in ALL query results are included
+- Combined score determined by the selected formula (see below)
+- Best for finding papers at the intersection of multiple topics
+
+**OR Mode:**
+- Papers appearing in ANY query result are included
+- Combined score = maximum score across all queries
+- Best for broadening search with synonyms or related terms
+
+### AND Combination Formulas
+
+When using AND mode, three formulas are available for combining scores:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     AND COMBINATION FORMULAS                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Example: Paper scores for 3 queries = [0.85, 0.72, 0.68]                   │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │ MINIMUM (default)                                                     │ │
+│  │ Formula: min(scores)                                                  │ │
+│  │ Result:  min(0.85, 0.72, 0.68) = 0.68                                 │ │
+│  │                                                                       │ │
+│  │ Behavior: Score limited by weakest query match                        │ │
+│  │ Use when: You want strict intersection - paper must be                │ │
+│  │           strongly relevant to ALL queries                            │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │ PRODUCT (geometric mean)                                              │ │
+│  │ Formula: (∏ scores)^(1/n) = nth root of product                       │ │
+│  │ Result:  (0.85 × 0.72 × 0.68)^(1/3) = 0.746                           │ │
+│  │                                                                       │ │
+│  │ Behavior: Penalizes if ANY query is weak, but less harsh than min     │ │
+│  │ Use when: You want balanced relevance across all queries              │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │ AVERAGE (arithmetic mean)                                             │ │
+│  │ Formula: Σ scores / n                                                 │ │
+│  │ Result:  (0.85 + 0.72 + 0.68) / 3 = 0.75                              │ │
+│  │                                                                       │ │
+│  │ Behavior: Most lenient - one strong match can compensate for weak     │ │
+│  │ Use when: You want papers that are good overall, even if              │ │
+│  │           one query matches less strongly                             │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  COMPARISON:                                                                │
+│  ┌────────────┬────────────┬────────────┬─────────────────────────────┐   │
+│  │ Formula    │ Result     │ Strictness │ Ranking Impact              │   │
+│  ├────────────┼────────────┼────────────┼─────────────────────────────┤   │
+│  │ Minimum    │ 0.68       │ Strictest  │ Rewards consistent matches  │   │
+│  │ Product    │ 0.746      │ Moderate   │ Balanced consideration      │   │
+│  │ Average    │ 0.75       │ Lenient    │ Favors strong single match  │   │
+│  └────────────┴────────────┴────────────┴─────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Implementation Details
+
+```typescript
+// Parallel search execution
+const searchPromises = queries.map(query =>
+  hybridSearch.search(query, options)
+);
+const allResults = await Promise.all(searchPromises);
+
+// Score combination
+const combinedScore = operator === 'and'
+  ? applyAndFormula(scores, formula)  // min, product, or average
+  : Math.max(...scores);               // OR uses max
+
+// Per-query scores stored for display
+result.queryScores = [0.85, 0.72, 0.68];  // Individual scores
+result.semanticScore = 0.68;              // Combined score
+```
+
+### Display Format
+
+The Match column shows combined score plus per-query breakdown:
+
+```
+73% (85|72|68)
+ │    └──┴──┴── Individual query scores (Q1|Q2|Q3)
+ └───────────── Combined score using selected formula
+```
+
+This helps users understand which queries matched strongly and which were weaker.
 
 ---
 
