@@ -83,9 +83,20 @@ function shutdown({ id, version, resourceURI, rootURI }, reason) {
 /**
  * Uninstall cleanup - removes the ZotSeek database file
  * This ensures no orphaned data remains after plugin removal
+ *
+ * Only deletes on true uninstall (ADDON_UNINSTALL = 6), not on upgrade/reload
  */
 async function uninstall(data, reason) {
-  Zotero.debug("[ZotSeek Bootstrap] Uninstalling...");
+  Zotero.debug("[ZotSeek Bootstrap] Uninstall called with reason: " + reason);
+
+  // ADDON_UNINSTALL = 6, only delete database on true uninstall
+  // Don't delete on ADDON_UPGRADE (7), ADDON_DOWNGRADE (8), or during dev reloads
+  if (reason !== 6) {
+    Zotero.debug("[ZotSeek Bootstrap] Skipping cleanup (not a true uninstall)");
+    return;
+  }
+
+  Zotero.debug("[ZotSeek Bootstrap] Performing uninstall cleanup...");
 
   try {
     // Delete the ZotSeek database file
