@@ -105,6 +105,7 @@ class PreferencesManager {
 
   /**
    * Update the visual state of mode selection cards
+   * Uses CSS classes for dark mode support
    */
   updateModeCards(): void {
     if (!this.window) return;
@@ -122,55 +123,45 @@ class PreferencesManager {
     const fullCard = doc.getElementById('zotseek-mode-full-card') as HTMLElement;
     const fullRadio = doc.getElementById('zotseek-mode-full-radio') as HTMLElement;
 
-    // Define styles for selected/unselected states
-    const selectedCardStyle = { background: '#e3f2fd', borderColor: '#1976d2' };
-    const unselectedCardStyle = { background: '#f5f5f5', borderColor: '#e0e0e0' };
-    const selectedRadioStyle = { borderColor: '#1976d2', showDot: true };
-    const unselectedRadioStyle = { borderColor: '#999', showDot: false };
-
-    // Helper to update radio dot
+    // Helper to update radio dot (uses CSS variable for theme support)
     const updateRadio = (radio: HTMLElement | null, selected: boolean) => {
       if (!radio) return;
-      radio.style.borderColor = selected ? '#1976d2' : '#999';
+      // Use CSS variable for border color
+      radio.style.borderColor = selected ? 'var(--zotseek-blue)' : 'var(--zotseek-text-tertiary)';
       // Clear existing children
       while (radio.firstChild) {
         radio.removeChild(radio.firstChild);
       }
-      // Add dot if selected
+      // Add dot if selected (uses CSS variable for theme support)
       if (selected) {
         const dot = doc.createElement('span');
-        dot.style.cssText = 'width: 8px; height: 8px; background: #1976d2; border-radius: 50%;';
+        dot.style.cssText = 'width: 8px; height: 8px; background: var(--zotseek-blue); border-radius: 50%;';
         radio.appendChild(dot);
       }
     };
 
+    // Helper to swap CSS classes for card selection state
+    const setCardSelected = (card: HTMLElement | null, selected: boolean) => {
+      if (!card) return;
+      card.classList.remove('zotseek-mode-card-selected', 'zotseek-mode-card-unselected');
+      card.classList.add(selected ? 'zotseek-mode-card-selected' : 'zotseek-mode-card-unselected');
+    };
+
     if (currentMode === 'abstract') {
       // Abstract selected
-      if (abstractCard) {
-        abstractCard.style.background = selectedCardStyle.background;
-        abstractCard.style.borderColor = selectedCardStyle.borderColor;
-      }
+      setCardSelected(abstractCard, true);
       updateRadio(abstractRadio, true);
 
       // Full unselected
-      if (fullCard) {
-        fullCard.style.background = unselectedCardStyle.background;
-        fullCard.style.borderColor = unselectedCardStyle.borderColor;
-      }
+      setCardSelected(fullCard, false);
       updateRadio(fullRadio, false);
     } else {
       // Full selected
-      if (fullCard) {
-        fullCard.style.background = selectedCardStyle.background;
-        fullCard.style.borderColor = selectedCardStyle.borderColor;
-      }
+      setCardSelected(fullCard, true);
       updateRadio(fullRadio, true);
 
       // Abstract unselected
-      if (abstractCard) {
-        abstractCard.style.background = unselectedCardStyle.background;
-        abstractCard.style.borderColor = unselectedCardStyle.borderColor;
-      }
+      setCardSelected(abstractCard, false);
       updateRadio(abstractRadio, false);
     }
   }
