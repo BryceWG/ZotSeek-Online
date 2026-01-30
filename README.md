@@ -20,6 +20,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - ⚡ **Lightning Fast** - Searches complete in <100ms
 - 📑 **Section-Aware** - See which section matched (Abstract, Methods, Results)
 - 📍 **Passage-Level Location** - Jump to exact page & paragraph in Full Document mode
+- ✅ **Multi-Select in Results** - Select multiple search results, right-click to add to collections
 - 🔄 **Auto-Index** - Automatically index new papers when you add them to your library
 - 💾 **Crash-Resilient** - Checkpoint saving every 25 items, resume after interruption
 - ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek (also accessible from search dialog)
@@ -469,6 +470,18 @@ ZotSeek can automatically index papers as you add them to your library:
 5. View results ranked by semantic similarity
 6. Double-click any result to open it in Zotero
 7. Click **⚙ Settings** (bottom-left) to quickly access ZotSeek preferences
+
+### Working with Multiple Search Results
+
+Select multiple items in the ZotSeek search results:
+
+1. **Select multiple items:**
+   - **Shift+click** to select a range of items
+   - **Cmd+click** (Mac) or **Ctrl+click** (Windows/Linux) to toggle individual items
+2. **Right-click** on the selection to open the context menu:
+   - **Show in Library** - Selects all items in Zotero's main pane
+   - **Add to Collection** - Add all selected items to any collection
+3. Click **"Open Selected"** to select all items in the Zotero library (when multiple selected)
 
 ### View Debug Output
 

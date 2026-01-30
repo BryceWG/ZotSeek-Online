@@ -107,6 +107,7 @@ export class ZotSeekDialogVTable {
         containerId: 'zotseek-results-container',
         onSelectionChange: (indices) => this.onSelectionChange(indices),
         onActivate: (index) => this.onActivate(index),
+        onContextMenu: (event, indices) => this.showContextMenu(event, indices),
       });
 
       await this.resultsTable.init(win);
@@ -980,16 +981,28 @@ export class ZotSeekDialogVTable {
 
   /**
    * Open the selected item(s)
+   * If multiple items are selected, selects them all in Zotero library
+   * If single item, opens/navigates to it (with page if available)
    */
   private openSelected(): void {
-    const result = this.resultsTable?.getSelectedResult();
-    if (result) {
-      // Get page number (exact from Find Pages, or estimated from index)
+    const results = this.resultsTable?.getSelectedResults() || [];
+
+    if (results.length === 0) return;
+
+    if (results.length === 1) {
+      // Single selection: open with page navigation
+      const result = results[0];
       const exactPage = this.resultsTable?.getExactPage(result.itemId);
       const hybridResult = result as HybridSearchResult;
       const pageNumber = exactPage || hybridResult.pageNumber;
-
       this.openItem(result.itemId, pageNumber);
+    } else {
+      // Multiple selection: select all in Zotero library
+      const itemIds = results.map(r => r.itemId);
+      // Deduplicate in case same paper appears multiple times (different chunks)
+      const uniqueIds = [...new Set(itemIds)];
+      this.zoteroAPI.selectItems(uniqueIds);
+      this.setStatus(`Selected ${uniqueIds.length} items in library`);
     }
   }
 
@@ -1021,6 +1034,147 @@ export class ZotSeekDialogVTable {
     const statusEl = this.window?.document.getElementById('zotseek-status-text');
     if (statusEl) {
       statusEl.textContent = message;
+    }
+  }
+
+  /**
+   * Show context menu for selected items
+   */
+  private showContextMenu(event: MouseEvent, indices: number[]): void {
+    this.logger.info(`Context menu triggered with ${indices.length} indices: ${indices.join(', ')}`);
+
+    if (!this.window || indices.length === 0) return;
+
+    const doc = this.window.document;
+    const results = indices.map(i => this.resultsTable?.getResultAt(i)).filter(Boolean);
+    if (results.length === 0) return;
+
+    // Get unique item IDs (same paper might appear multiple times as different chunks)
+    const itemIds = [...new Set(results.map(r => r!.itemId))];
+    const itemCount = itemIds.length;
+
+    // Create popup menu
+    const popup = doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'menupopup');
+    popup.id = 'zotseek-context-menu';
+
+    // "Show in Library" option
+    const showInLibrary = doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'menuitem');
+    showInLibrary.setAttribute('label', itemCount === 1 ? 'Show in Library' : `Show ${itemCount} Items in Library`);
+    showInLibrary.addEventListener('command', () => {
+      if (itemCount === 1) {
+        this.zoteroAPI.selectItem(itemIds[0]);
+      } else {
+        this.zoteroAPI.selectItems(itemIds);
+      }
+      this.setStatus(`Selected ${itemCount} item${itemCount > 1 ? 's' : ''} in library`);
+    });
+    popup.appendChild(showInLibrary);
+
+    // Separator
+    const sep1 = doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'menuseparator');
+    popup.appendChild(sep1);
+
+    // "Add to Collection" submenu
+    const addToCollection = doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'menu');
+    addToCollection.setAttribute('label', 'Add to Collection');
+    const collectionPopup = doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'menupopup');
+
+    // Get collections for the submenu
+    this.populateCollectionMenu(collectionPopup, itemIds);
+    addToCollection.appendChild(collectionPopup);
+    popup.appendChild(addToCollection);
+
+    // Add popup to document and show it
+    doc.documentElement.appendChild(popup);
+    (popup as any).openPopupAtScreen(event.screenX, event.screenY, true);
+
+    // Clean up popup after it closes
+    popup.addEventListener('popuphidden', () => {
+      popup.remove();
+    });
+  }
+
+  /**
+   * Populate collection submenu with available collections
+   */
+  private populateCollectionMenu(popup: Element, itemIds: number[]): void {
+    const doc = this.window?.document;
+    if (!doc) return;
+
+    try {
+      // Get the library ID from the first item
+      const firstItem = Zotero.Items.get(itemIds[0]);
+      const libraryID = firstItem?.libraryID || Zotero.Libraries.userLibraryID;
+
+      // Get all collections in the library
+      const collections = Zotero.Collections.getByLibrary(libraryID);
+
+      if (collections.length === 0) {
+        const noCollections = doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'menuitem');
+        noCollections.setAttribute('label', 'No collections');
+        noCollections.setAttribute('disabled', 'true');
+        popup.appendChild(noCollections);
+        return;
+      }
+
+      // Sort collections by name
+      collections.sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+      // Add each collection as a menu item (limit to top 20 to avoid huge menus)
+      const maxCollections = 20;
+      for (let i = 0; i < Math.min(collections.length, maxCollections); i++) {
+        const collection = collections[i];
+        const item = doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'menuitem');
+        item.setAttribute('label', collection.name);
+        item.addEventListener('command', async () => {
+          await this.addItemsToCollection(itemIds, collection.id);
+        });
+        popup.appendChild(item);
+      }
+
+      if (collections.length > maxCollections) {
+        const more = doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'menuitem');
+        more.setAttribute('label', `... and ${collections.length - maxCollections} more`);
+        more.setAttribute('disabled', 'true');
+        popup.appendChild(more);
+      }
+    } catch (error) {
+      this.logger.error('Failed to populate collection menu:', error);
+    }
+  }
+
+  /**
+   * Add items to a collection
+   * Must be wrapped in a transaction for Zotero's database operations
+   */
+  private async addItemsToCollection(itemIds: number[], collectionId: number): Promise<void> {
+    try {
+      this.logger.info(`Adding items ${itemIds.join(', ')} to collection ${collectionId}`);
+
+      const collection = Zotero.Collections.get(collectionId);
+      if (!collection) {
+        this.setStatus('Collection not found');
+        this.logger.error(`Collection ${collectionId} not found`);
+        return;
+      }
+
+      const collectionName = collection.name;
+      this.logger.info(`Found collection: ${collectionName}`);
+
+      // Wrap in transaction - required for Zotero DB operations
+      await Zotero.DB.executeTransaction(async () => {
+        await collection.addItems(itemIds);
+      });
+
+      this.setStatus(`Added ${itemIds.length} item${itemIds.length > 1 ? 's' : ''} to "${collectionName}"`);
+      this.logger.info(`Added ${itemIds.length} items to collection "${collectionName}"`);
+    } catch (error: any) {
+      const errorMsg = error?.message || error?.toString() || 'Unknown error';
+      this.logger.error(`Failed to add items to collection: ${errorMsg}`);
+      if (error?.stack) {
+        Zotero.debug(`[ZotSeek] Stack: ${error.stack}`);
+      }
+      this.setStatus('Failed to add items to collection');
     }
   }
 

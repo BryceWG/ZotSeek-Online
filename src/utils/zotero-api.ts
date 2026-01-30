@@ -320,6 +320,20 @@ export class ZoteroAPI {
   }
 
   /**
+   * Select multiple items in Zotero
+   */
+  selectItems(itemIds: number[]): void {
+    try {
+      const pane = Zotero.getActiveZoteroPane();
+      if (pane && itemIds.length > 0) {
+        pane.selectItems(itemIds);
+      }
+    } catch (error) {
+      debug(`Failed to select items: ${error}`);
+    }
+  }
+
+  /**
    * Get total page count for an item's PDF attachment
    * Uses Zotero.Fulltext.getPages() for accurate page counts
    */

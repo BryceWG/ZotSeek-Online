@@ -170,8 +170,7 @@
 
 #zotseek-results-container .row.selected {
   background: #d1e7fd !important;
-  border-top: 1px solid #b3d4fc;
-  border-bottom: 1px solid #b3d4fc;
+  border-bottom-color: #b8d4f0 !important;  /* Match selection color for seamless look */
 }
 
 #zotseek-results-container .row.focused {
@@ -358,6 +357,20 @@
 #zotseek-results-container [role="treeitem"][aria-selected="true"],
 #zotseek-results-container tr.selected {
   background: #d1e7fd !important;
+  border-bottom-color: #b8d4f0 !important;  /* Match selection color for seamless look */
+}
+
+/* Text color on selected rows - ensure good contrast */
+#zotseek-results-container .row.selected .cell,
+#zotseek-results-container [role="treeitem"][aria-selected="true"] .cell,
+#zotseek-results-container tr.selected .cell {
+  color: #1a1a1a !important;
+}
+
+/* Keep similarity column distinctive but readable */
+#zotseek-results-container .row.selected .cell[data-key="similarity"],
+#zotseek-results-container .row.selected [data-key="similarity"] {
+  color: #0d47a1 !important;
 }
 
 /* Multi-Query Styles */
@@ -528,6 +541,19 @@
   #zotseek-results-container .virtualized-table .row.selected,
   #zotseek-results-container [role="treeitem"][aria-selected="true"] {
     background: #1e3a5f !important;
+    border-bottom-color: #2a4a6f !important;  /* Match selection color for seamless look */
+  }
+
+  /* Dark mode: Text color on selected rows */
+  #zotseek-results-container .row.selected .cell,
+  #zotseek-results-container [role="treeitem"][aria-selected="true"] .cell {
+    color: #ffffff !important;
+  }
+
+  /* Dark mode: Keep similarity column readable on selection */
+  #zotseek-results-container .row.selected .cell[data-key="similarity"],
+  #zotseek-results-container .row.selected [data-key="similarity"] {
+    color: #90caf9 !important;
   }
   
   #zotseek-results-container .cell[data-key="title"] {

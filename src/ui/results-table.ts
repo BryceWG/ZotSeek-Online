@@ -30,6 +30,7 @@ export interface ResultsTableOptions {
   columns?: ResultsTableColumn[];
   onSelectionChange?: (indices: number[]) => void;
   onActivate?: (index: number) => void;  // Double-click or Enter
+  onContextMenu?: (event: MouseEvent, indices: number[]) => void;  // Right-click
 }
 
 const DEFAULT_COLUMNS: ResultsTableColumn[] = [
@@ -146,7 +147,7 @@ export class SearchResultsTable {
         id: 'zotseek-results-table',
         columns: this.options.columns,
         showHeader: true,
-        multiSelect: false,
+        multiSelect: true,
         staticColumns: false,  // Allow column resizing like zotero-addons
         disableFontSizeScaling: false,  // Match zotero-addons setting
         linesPerRow: 1.6,  // Match zotero-addons row height
@@ -171,10 +172,32 @@ export class SearchResultsTable {
       .setProp('onColumnSort', (columnIndex: number) => {
         this.handleColumnSort(columnIndex);
       })
-      .setProp('onItemContextMenu', (_event: Event, _x: number, _y: number, _index: number) => {
-        // Context menu handler - prevents TypeError when right-clicking
-        // Can be extended later to show item options
-        return false;  // Don't show default context menu
+      .setProp('onItemContextMenu', (event: Event, x: number, y: number) => {
+        this.logger.info(`onItemContextMenu called at (${x}, ${y})`);
+
+        // Get selected indices from current selection
+        const selectedIndices = this.getSelectedIndices();
+        this.logger.info(`Selected indices: ${selectedIndices.join(', ')}`);
+
+        if (selectedIndices.length === 0) {
+          this.logger.info('No selection, skipping context menu');
+          return;
+        }
+
+        // Call the context menu callback if provided
+        if (this.options.onContextMenu) {
+          this.logger.info('Calling onContextMenu callback');
+          // Create a synthetic mouse event with screen coordinates
+          const mouseEvent = event instanceof MouseEvent ? event : new MouseEvent('contextmenu', {
+            screenX: x,
+            screenY: y,
+            clientX: x,
+            clientY: y,
+          });
+          this.options.onContextMenu(mouseEvent, selectedIndices);
+        } else {
+          this.logger.info('No onContextMenu callback registered');
+        }
       })
       .setProp('storeColumnPrefs', (prefs: any) => {
         // Store column preferences (width, order, visibility)
@@ -446,25 +469,32 @@ export class SearchResultsTable {
   }
 
   /**
+   * Get indices of all selected rows
+   */
+  getSelectedIndices(): number[] {
+    if (!this.tableHelper) return [];
+
+    const tree = this.tableHelper.treeInstance;
+    if (!tree) return [];
+
+    const selection = tree.selection;
+    if (!selection || selection.count === 0) return [];
+
+    const indices: number[] = [];
+    for (let i = 0; i < this.results.length; i++) {
+      if (selection.isSelected(i)) {
+        indices.push(i);
+      }
+    }
+    return indices;
+  }
+
+  /**
    * Get all selected results
    */
   getSelectedResults(): AnySearchResult[] {
-    if (!this.tableHelper) return [];
-    
-    const tree = this.tableHelper.treeInstance;
-    if (!tree) return [];
-    
-    const selection = tree.selection;
-    if (!selection || selection.count === 0) return [];
-    
-    const selectedIndices: number[] = [];
-    for (let i = 0; i < this.results.length; i++) {
-      if (selection.isSelected(i)) {
-        selectedIndices.push(i);
-      }
-    }
-    
-    return selectedIndices.map(i => this.results[i]).filter(Boolean);
+    const indices = this.getSelectedIndices();
+    return indices.map(i => this.results[i]).filter(Boolean);
   }
 
   /**

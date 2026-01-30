@@ -2,6 +2,30 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Multi-Select in Search Results** - Select multiple items using standard shortcuts
+  - Shift+click to select a range of items
+  - Cmd/Ctrl+click to toggle individual items
+  - "Open Selected" button selects all items in Zotero library when multiple selected
+- **Right-Click Context Menu** - Batch operations on selected results
+  - "Show in Library" - Selects item(s) in the main Zotero pane
+  - "Add to Collection" - Submenu to add selected items to any collection
+- **Dark Mode Improvements** - Better text contrast on selected rows in both light and dark modes
+
+### Fixed
+- **Database Persistence** - Fixed database being wiped on plugin reload during development
+  - Only deletes database on true uninstall (ADDON_UNINSTALL), not on upgrade/reload
+
+### Technical
+- Added `selectItems()` method to ZoteroAPI for multi-item selection
+- Context menu uses XUL `menupopup` with dynamic collection submenu
+- Database operations wrapped in `Zotero.DB.executeTransaction()` for proper locking
+- Added `getSelectedIndices()` and `getSelectedResults()` methods to results table
+
+---
+
 ## [1.7.0] - 2026-01-26
 
 ### Added
