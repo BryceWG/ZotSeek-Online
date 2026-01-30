@@ -30,3 +30,4 @@ coverage/
 
 # Zotero specific
 *.xpi
+.mcp.json

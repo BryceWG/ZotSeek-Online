@@ -2,7 +2,7 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
-## [Unreleased]
+## [1.8.0] - 2026-01-30
 
 ### Added
 - **Multi-Select in Search Results** - Select multiple items using standard shortcuts
