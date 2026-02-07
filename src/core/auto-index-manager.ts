@@ -241,6 +241,16 @@ export class AutoIndexManager {
       // Ignore preference errors
     }
 
+    // Exclude items with exclusion tag
+    try {
+      const excludeTag = Zotero.Prefs.get('zotseek.excludeTag', true);
+      if (excludeTag && item.getTags?.()?.some((t: any) => t.tag === excludeTag)) {
+        return false;
+      }
+    } catch {
+      // Ignore tag check errors
+    }
+
     return true;
   }
 

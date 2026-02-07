@@ -23,6 +23,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - ✅ **Multi-Select in Results** - Select multiple search results, right-click to add to collections
 - 🔄 **Auto-Index** - Automatically index new papers when you add them to your library
 - 🗑️ **Auto-Cleanup** - Embeddings automatically removed when items are deleted or trashed
+- 🚫 **Tag-Based Exclusion** - Tag items with `zotseek-exclude` to skip them during indexing
 - 💾 **Crash-Resilient** - Checkpoint saving every 25 items, resume after interruption
 - ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek (also accessible from search dialog)
 
@@ -473,6 +474,18 @@ ZotSeek can automatically index papers as you add them to your library:
 
 This is useful when you want to re-index specific items (e.g., after updating a PDF), or to exclude items from search results without deleting them from your library.
 
+### Excluding Items from Indexing
+
+You can prevent specific items from being indexed by tagging them:
+
+1. Select one or more items in Zotero
+2. Add the tag `zotseek-exclude` (or your custom tag name)
+3. These items will be skipped during all indexing operations
+
+**Customizing the tag name:** Go to **Zotero → Settings → ZotSeek → Advanced Settings** and change the **Exclude tag** field. Leave it empty to disable tag-based exclusion.
+
+**Tip:** Use Zotero's advanced search (Edit → Advanced Search) to find items by title, type, collection, etc., then bulk-tag them. This is more flexible than regex-based filtering since it leverages Zotero's native search capabilities.
+
 ### ZotSeek Search Dialog
 
 1. Click the **ZotSeek button** in the toolbar (🔍✨)
@@ -512,6 +525,7 @@ Access settings via **Zotero → Settings → ZotSeek** (or **Zotero → Prefere
 The settings panel allows you to configure:
 - **Indexing Mode**: Abstract only or Full Document
 - **Search Options**: Maximum results, minimum similarity threshold
+- **Exclusion**: Exclude books, exclude by tag
 - **Actions**: Clear index, re-index library
 
 ### Preferences Reference
@@ -533,6 +547,8 @@ Preferences are stored in Zotero's preferences system:
 | `zotseek.indexingMode` | `"full"` | `"abstract"` or `"full"` |
 | `zotseek.maxTokens` | 800 / 2000 | Max tokens per chunk (800 on Zotero 7, 2000 on Zotero 8) |
 | `zotseek.maxChunksPerPaper` | `100` | Max chunks per paper |
+| `zotseek.excludeBooks` | `true` | Skip books during indexing |
+| `zotseek.excludeTag` | `"zotseek-exclude"` | Tag name to skip items during indexing (empty to disable) |
 
 **Hybrid Search Settings:**
 

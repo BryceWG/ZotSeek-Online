@@ -71,6 +71,20 @@ class Logger {
 }
 
 /**
+ * Check if an item has the exclusion tag (module-level to avoid prototype issues)
+ */
+function hasExcludeTag(item: any): boolean {
+  // Use Zotero global directly (not getZotero()) to avoid IIFE scope issues
+  try {
+    const excludeTag = Zotero.Prefs.get('zotseek.excludeTag', true);
+    if (!excludeTag) return false;
+    return item.getTags?.()?.some((t: any) => t.tag === excludeTag) ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Main plugin class
  */
 class ZotSeekPlugin {
@@ -134,6 +148,7 @@ class ZotSeekPlugin {
       'zotseek.maxTokens': isSlowFirefox ? 800 : 2000,
       'zotseek.maxChunksPerPaper': 100,
       'zotseek.excludeBooks': true,        // Exclude books from search/indexing by default
+      'zotseek.excludeTag': 'zotseek-exclude', // Tag name to exclude items from indexing
     };
 
     for (const [key, defaultValue] of Object.entries(defaults)) {
@@ -885,16 +900,25 @@ class ZotSeekPlugin {
       this.logger.info(`Indexing mode: ${indexingMode}`);
       progressWindow.addLine(`Indexing mode: ${indexingMode}`);
 
-      // === PHASE 1: Filter out already-indexed items ===
+      // === PHASE 1: Filter out excluded and already-indexed items ===
       progressWindow.setHeadline('Checking for already-indexed items...');
       const itemsToIndex: any[] = [];
+      let skippedExcluded = 0;
       for (const item of items) {
+        if (hasExcludeTag(item)) {
+          skippedExcluded++;
+          continue;
+        }
         const isIndexed = await this.vectorStore!.isIndexed(item.id);
         if (!isIndexed) {
           itemsToIndex.push(item);
         }
       }
-      const skippedAlreadyIndexed = items.length - itemsToIndex.length;
+      if (skippedExcluded > 0) {
+        this.logger.info(`Skipped ${skippedExcluded} items with exclusion tag`);
+        progressWindow.addLine(`✓ Skipped ${skippedExcluded} excluded items (tag)`, 'chrome://zotero/skin/tick.png');
+      }
+      const skippedAlreadyIndexed = items.length - itemsToIndex.length - skippedExcluded;
       if (skippedAlreadyIndexed > 0) {
         this.logger.info(`Skipped ${skippedAlreadyIndexed} already-indexed items`);
         progressWindow.addLine(`✓ Skipped ${skippedAlreadyIndexed} already-indexed items`, 'chrome://zotero/skin/tick.png');
@@ -1137,9 +1161,19 @@ class ZotSeekPlugin {
       embeddingPipeline.reset();
       await embeddingPipeline.init();
 
+      // Filter out items with exclusion tag
+      const filteredItems = items.filter(item => !hasExcludeTag(item));
+      if (filteredItems.length === 0) {
+        this.logger.info('All items excluded by tag');
+        try { itemRow.setIcon('chrome://zotero/skin/tick.png'); } catch { /* ignore */ }
+        itemRow.setText('All items excluded by tag');
+        progressWin.startCloseTimer(3000);
+        return;
+      }
+
       // Extract chunks from items
       itemRow.setText('Extracting...');
-      const extractedItems = await textExtractor.extractChunksFromItems(items, indexingMode);
+      const extractedItems = await textExtractor.extractChunksFromItems(filteredItems, indexingMode);
 
       if (extractedItems.length === 0) {
         this.logger.info('No content extracted from items');

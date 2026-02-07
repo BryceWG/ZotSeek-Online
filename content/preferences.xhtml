@@ -285,6 +285,19 @@
   <html:p style="color: var(--zotseek-text-secondary); font-size: 11px; margin: 4px 0 0 24px;">
     Books lack paper sections and are too long to index well.
   </html:p>
+
+  <html:div style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
+    <html:label for="zotseek-pref-excludeTag" style="color: var(--zotseek-text-primary);">Exclude tag</html:label>
+    <html:input type="text"
+                id="zotseek-pref-excludeTag"
+                class="zotseek-input"
+                value="zotseek-exclude"
+                placeholder="Enter tag name"
+                style="width: 160px; padding: 4px 8px; border-radius: 4px; border-width: 1px; border-style: solid;" />
+  </html:div>
+  <html:p style="color: var(--zotseek-text-secondary); font-size: 11px; margin: 4px 0 0 24px;">
+    Items with this tag will be skipped during indexing. Leave empty to disable.
+  </html:p>
 </groupbox>
 
 <!-- Actions -->

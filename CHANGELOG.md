@@ -13,11 +13,19 @@ All notable changes to ZotSeek - Semantic Search for Zotero will be documented i
   - Supports multi-select (remove several items at once)
   - Shows quick notification with count of removed items
   - Safe to use on non-indexed items (no-op, no error)
+- **Tag-Based Exclusion** - Exclude items from indexing by tagging them
+  - Default tag: `zotseek-exclude` (configurable in Settings → ZotSeek → Advanced Settings)
+  - Works during manual indexing (Update Library Index, Index Selected, Index Collection)
+  - Works during auto-indexing of new items
+  - Leave the tag name empty to disable exclusion
+  - Tip: Use Zotero's Advanced Search to bulk-tag items by title, type, or collection
 
 ### Technical
 - Added `cleanupNotifierID` field and `registerCleanupObserver()` for delete/trash event handling
 - Cleanup observer uses `vectorStore.delete()` which is idempotent (DELETE WHERE returns 0 rows for non-indexed items)
 - Context menu handler filters to `isRegularItem()` to skip attachments/notes
+- Tag exclusion uses module-level `hasExcludeTag()` function (not class method) for SpiderMonkey compatibility
+- Exclusion check runs before `isIndexed` check in Phase 1 filtering for efficiency
 
 ---
 

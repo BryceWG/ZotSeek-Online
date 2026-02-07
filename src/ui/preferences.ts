@@ -81,6 +81,7 @@ class PreferencesManager {
       topK: Z.Prefs.get('zotseek.topK', true) ?? 20,
       minSimilarity: Z.Prefs.get('zotseek.minSimilarityPercent', true) ?? 30,
       excludeBooks: Z.Prefs.get('zotseek.excludeBooks', true) ?? true,
+      excludeTag: Z.Prefs.get('zotseek.excludeTag', true) || 'zotseek-exclude',
       autoIndex: Z.Prefs.get('zotseek.autoIndex', true) ?? false,
     };
 
@@ -98,6 +99,9 @@ class PreferencesManager {
     // Set checkbox values
     this.setCheckboxValue('zotseek-pref-excludeBooks', prefs.excludeBooks);
     this.setCheckboxValue('zotseek-pref-autoIndex', prefs.autoIndex);
+
+    // Set text input values
+    this.setInputValue('zotseek-pref-excludeTag', prefs.excludeTag);
 
     // Update mode cards to match current selection
     this.updateModeCards();
@@ -228,6 +232,16 @@ class PreferencesManager {
         this.logger.info(`Auto-index changed to: ${checked}`);
         // Reload auto-index manager to apply new setting
         autoIndexManager.reload();
+      });
+    }
+
+    // Exclude tag input
+    const excludeTagInput = doc.getElementById('zotseek-pref-excludeTag') as HTMLInputElement;
+    if (excludeTagInput) {
+      excludeTagInput.addEventListener('change', () => {
+        const value = excludeTagInput.value.trim();
+        Z.Prefs.set('zotseek.excludeTag', value, true);
+        this.logger.info(`Exclude tag changed to: "${value}"`);
       });
     }
 
