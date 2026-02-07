@@ -2,6 +2,25 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Auto-Cleanup on Delete/Trash** - Embeddings are automatically removed when items are deleted or trashed
+  - Prevents ghost search results from orphaned data
+  - Always active regardless of auto-index setting (data integrity concern)
+  - Registered as a separate Notifier observer in plugin startup
+- **"Remove from ZotSeek Index"** - New right-click context menu item to manually remove items from the index
+  - Supports multi-select (remove several items at once)
+  - Shows quick notification with count of removed items
+  - Safe to use on non-indexed items (no-op, no error)
+
+### Technical
+- Added `cleanupNotifierID` field and `registerCleanupObserver()` for delete/trash event handling
+- Cleanup observer uses `vectorStore.delete()` which is idempotent (DELETE WHERE returns 0 rows for non-indexed items)
+- Context menu handler filters to `isRegularItem()` to skip attachments/notes
+
+---
+
 ## [1.8.0] - 2026-01-30
 
 ### Added

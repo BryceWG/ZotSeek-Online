@@ -21,7 +21,7 @@ import { getIndexingMode } from './utils/chunker';
 import { getZotero } from './utils/zotero-helper';
 import { autoIndexManager } from './core/auto-index-manager';
 // Use stable progress window from toolkit to avoid crashes
-import { StableProgressWindow } from './utils/stable-progress';
+import { StableProgressWindow, showQuickNotification } from './utils/stable-progress';
 // UI components
 import { searchDialog } from './ui/search-dialog';
 import { searchDialogWithVTable } from './ui/search-dialog-with-vtable';
@@ -80,6 +80,7 @@ class ZotSeekPlugin {
   public vectorStore: IVectorStore | null = null;  // Public for preference pane access
   private initialized = false;
   private indexing = false;
+  private cleanupNotifierID: string | null = null;
 
   // Hooks for bootstrap.js
   public hooks = {
@@ -175,6 +176,9 @@ class ZotSeekPlugin {
       this.logger.error(`Failed to initialize core modules: ${error}`);
     }
 
+    // Register cleanup observer for delete/trash events (always active, not gated on autoIndex)
+    this.registerCleanupObserver();
+
     // Register context menu using Zotero 8 MenuManager API (preferred)
     // Falls back to XUL injection for older versions
     this.registerContextMenu();
@@ -221,6 +225,54 @@ class ZotSeekPlugin {
     // Start monitoring (respects autoIndex preference)
     autoIndexManager.start();
     this.logger.info('Auto-index manager initialized');
+  }
+
+  /**
+   * Register a Notifier observer that cleans up embeddings when items are deleted or trashed.
+   * This runs unconditionally (independent of the autoIndex preference) because
+   * orphaned embeddings cause ghost search results — a data integrity concern.
+   */
+  private registerCleanupObserver(): void {
+    const Z = getZotero();
+    if (!Z) return;
+
+    this.cleanupNotifierID = Z.Notifier.registerObserver(
+      {
+        notify: async (
+          event: string,
+          _type: string,
+          ids: Array<string | number>,
+          _extraData: any
+        ) => {
+          if (event !== 'delete' && event !== 'trash') return;
+
+          try {
+            // Ensure vector store is available (lazy init if needed)
+            await this.ensureStoreReady();
+            if (!this.vectorStore) return;
+
+            let cleaned = 0;
+            for (const id of ids) {
+              const numericId = typeof id === 'string' ? parseInt(id, 10) : id;
+              if (isNaN(numericId)) continue;
+              await this.vectorStore.delete(numericId);
+              cleaned++;
+            }
+
+            if (cleaned > 0) {
+              this.logger.info(`Cleaned up embeddings for ${cleaned} ${event === 'trash' ? 'trashed' : 'deleted'} items`);
+            }
+          } catch (error: any) {
+            // Non-critical: log but don't throw — deletion of non-indexed items is a no-op
+            this.logger.error(`Failed to clean up embeddings on ${event}: ${error?.message || error}`);
+          }
+        }
+      },
+      ['item'],
+      'zotseek-cleanup'
+    );
+
+    this.logger.info('Cleanup observer registered (handles delete/trash events)');
   }
 
   private async initializeCore(): Promise<void> {
@@ -365,12 +417,19 @@ class ZotSeekPlugin {
     indexLibraryItem.setAttribute('label', 'Update Library Index');
     indexLibraryItem.addEventListener('command', () => this.onIndexLibrary());
 
+    // Create "Remove from Index" menu item
+    const removeFromIndexItem = doc.createXULElement('menuitem');
+    removeFromIndexItem.id = 'zotseek-remove-from-index';
+    removeFromIndexItem.setAttribute('label', 'Remove from ZotSeek Index');
+    removeFromIndexItem.addEventListener('command', () => this.onRemoveFromIndex());
+
     itemMenu.appendChild(separator);
     itemMenu.appendChild(findSimilarItem);
     itemMenu.appendChild(openSearchItem);
     itemMenu.appendChild(indexSelectedItem);
     itemMenu.appendChild(indexCollectionItem);
     itemMenu.appendChild(indexLibraryItem);
+    itemMenu.appendChild(removeFromIndexItem);
 
     this.logger.info('Context menu registered successfully');
   }
@@ -750,6 +809,44 @@ class ZotSeekPlugin {
     this.logger.info(`Found ${items.length} items to index`);
 
     await this.indexItems(items);
+  }
+
+  /**
+   * Remove selected items from the ZotSeek index
+   */
+  private async onRemoveFromIndex(): Promise<void> {
+    const Z = getZotero();
+    if (!Z) return;
+
+    const ZoteroPane = Z.getActiveZoteroPane();
+    const selectedItems = ZoteroPane?.getSelectedItems() || [];
+
+    if (selectedItems.length === 0) {
+      showQuickNotification('No items selected', 'default');
+      return;
+    }
+
+    try {
+      await this.ensureStoreReady();
+      if (!this.vectorStore) return;
+
+      let removed = 0;
+      for (const item of selectedItems) {
+        if (item.isRegularItem()) {
+          await this.vectorStore.delete(item.id);
+          removed++;
+        }
+      }
+
+      const msg = removed > 0
+        ? `Removed ${removed} item${removed !== 1 ? 's' : ''} from index`
+        : 'Selected items were not in the index';
+      showQuickNotification(msg, removed > 0 ? 'success' : 'default');
+      this.logger.info(msg);
+    } catch (error: any) {
+      this.logger.error(`Failed to remove from index: ${error?.message || error}`);
+      showQuickNotification('Failed to remove from index', 'fail');
+    }
   }
 
   /**
@@ -1268,6 +1365,15 @@ class ZotSeekPlugin {
   async onShutdown(): Promise<void> {
     this.logger.info('Shutting down plugin');
 
+    // Unregister cleanup observer
+    if (this.cleanupNotifierID) {
+      const Z = getZotero();
+      if (Z) {
+        Z.Notifier.unregisterObserver(this.cleanupNotifierID);
+      }
+      this.cleanupNotifierID = null;
+    }
+
     // Stop auto-index manager
     autoIndexManager.stop();
 
@@ -1299,6 +1405,7 @@ class ZotSeekPlugin {
       'zotseek-index-selected',
       'zotseek-index-collection',
       'zotseek-index-library',
+      'zotseek-remove-from-index',
       'zotseek-separator',
     ];
     for (const id of ids) {

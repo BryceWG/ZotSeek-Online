@@ -22,6 +22,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - 📍 **Passage-Level Location** - Jump to exact page & paragraph in Full Document mode
 - ✅ **Multi-Select in Results** - Select multiple search results, right-click to add to collections
 - 🔄 **Auto-Index** - Automatically index new papers when you add them to your library
+- 🗑️ **Auto-Cleanup** - Embeddings automatically removed when items are deleted or trashed
 - 💾 **Crash-Resilient** - Checkpoint saving every 25 items, resume after interruption
 - ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek (also accessible from search dialog)
 
@@ -460,6 +461,17 @@ ZotSeek can automatically index papers as you add them to your library:
 - Batches multiple items together (5 second delay)
 - Shows a brief progress indicator while indexing
 - Respects your indexing mode setting (Abstract or Full Document)
+
+### Managing the Index
+
+**Automatic cleanup:** When you delete or trash items in Zotero, their embeddings are automatically removed from the ZotSeek index. This prevents ghost search results and keeps the index clean — no action needed on your part.
+
+**Manual removal:** To remove specific items from the index without deleting them:
+1. Select one or more items in Zotero
+2. Right-click → **"Remove from ZotSeek Index"**
+3. A notification confirms how many items were removed
+
+This is useful when you want to re-index specific items (e.g., after updating a PDF), or to exclude items from search results without deleting them from your library.
 
 ### ZotSeek Search Dialog
 
