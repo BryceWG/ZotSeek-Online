@@ -2,7 +2,7 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
-## [Unreleased]
+## [1.9.0] - 2026-02-07
 
 ### Added
 - **Auto-Cleanup on Delete/Trash** - Embeddings are automatically removed when items are deleted or trashed
