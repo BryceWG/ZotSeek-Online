@@ -25,6 +25,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - 🗑️ **Auto-Cleanup** - Embeddings automatically removed when items are deleted or trashed
 - 🚫 **Tag-Based Exclusion** - Tag items with `zotseek-exclude` to skip them during indexing
 - 💾 **Crash-Resilient** - Checkpoint saving every 25 items, resume after interruption
+- 🔌 **Plugin API** - Other Zotero plugins can [call ZotSeek's search programmatically](docs/API.md)
 - ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek (also accessible from search dialog)
 
 ---
@@ -637,8 +638,10 @@ Note: If WebGPU is unavailable or fails, the plugin automatically falls back to 
 
 See the [docs/](docs/) folder for detailed documentation:
 
-- [**DEVELOPMENT.md**](docs/DEVELOPMENT.md) - Development guide, ChromeWorker + Transformers.js implementation
+- [**API.md**](docs/API.md) - Plugin API for integration with other Zotero plugins
 - [**SEARCH_ARCHITECTURE.md**](docs/SEARCH_ARCHITECTURE.md) - Hybrid search, RRF fusion, chunking strategy
+- [**DEVELOPMENT.md**](docs/DEVELOPMENT.md) - Development guide, ChromeWorker + Transformers.js implementation
+- [**ROADMAP.md**](docs/ROADMAP.md) - Planned features and improvements
 
 ---
 
