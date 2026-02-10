@@ -113,9 +113,10 @@ export class SearchEngine {
     this.logger.info(`Searching for: "${query.substring(0, 50)}..."`);
     const startTime = Date.now();
 
-    // Generate query embedding
+    // Auto-initialize pipeline if needed (supports cold-start from API)
     if (!this.pipeline.isReady()) {
-      throw new Error('Embedding pipeline not initialized');
+      this.logger.info('Auto-initializing embedding pipeline for search...');
+      await this.pipeline.init();
     }
 
     // Use embedQuery for search queries (applies search_query: prefix)
