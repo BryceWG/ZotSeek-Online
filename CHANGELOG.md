@@ -2,7 +2,7 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
-## [Unreleased]
+## [1.10.0] - 2026-02-20
 
 ### Added
 - **Configurable Auto-Index Delay** - Set how long to wait after the last item is added before auto-indexing starts (closes #21)
