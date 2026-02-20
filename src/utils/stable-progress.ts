@@ -33,6 +33,13 @@ export class StableProgressWindow {
   private startTime: number;
   private title: string;
 
+  // Pause/resume state
+  private paused = false;
+  private resumeResolver: (() => void) | null = null;
+  private pausedAt: number = 0;
+  private totalPausedMs: number = 0;
+  private pauseButton: any = null;
+
   // Track checkpoint lines for reverse-order display (newest first)
   private checkpointTexts: string[] = [];
   private checkpointStartIndex: number = -1; // Index of first checkpoint line in toolkit's lines array
@@ -296,15 +303,68 @@ export class StableProgressWindow {
    */
   cancel(): void {
     this.cancelled = true;
+    this.paused = false;
     this.logger.info('Progress cancelled by user');
-    
+
+    // Unblock waitIfPaused() so the loop can reach the cancel check
+    if (this.resumeResolver) {
+      this.resumeResolver();
+      this.resumeResolver = null;
+    }
+
     if (this.cancelCallback) {
       this.cancelCallback();
     }
-    
+
     this.close();
   }
-  
+
+  /**
+   * Pause the operation
+   */
+  pause(): void {
+    if (this.paused || this.cancelled) return;
+    this.paused = true;
+    this.pausedAt = Date.now();
+    this.logger.info('Progress paused by user');
+    this.updatePauseButtonState();
+  }
+
+  /**
+   * Resume the operation
+   */
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.totalPausedMs += Date.now() - this.pausedAt;
+    this.pausedAt = 0;
+    this.logger.info('Progress resumed by user');
+    this.updatePauseButtonState();
+
+    if (this.resumeResolver) {
+      this.resumeResolver();
+      this.resumeResolver = null;
+    }
+  }
+
+  /**
+   * Wait if paused. Resolves immediately if not paused.
+   * Call this at checkpoint boundaries in the indexing loop.
+   */
+  async waitIfPaused(): Promise<void> {
+    if (!this.paused) return;
+    return new Promise<void>(resolve => {
+      this.resumeResolver = resolve;
+    });
+  }
+
+  /**
+   * Check if paused
+   */
+  isPaused(): boolean {
+    return this.paused;
+  }
+
   /**
    * Fallback to console logging
    */
@@ -327,22 +387,38 @@ export class StableProgressWindow {
   }
 
   /**
-   * Find and cache the progress window reference
+   * Find the progress window belonging to this instance.
+   * Returns the most recently created 'Progress' window (last in the
+   * window manager enumeration) to avoid targeting stale popups left
+   * over from previous operations.
    */
   private findProgressWindow(): any {
-    if (this.progressWin) return this.progressWin;
+    // Validate cached reference is still open
+    if (this.progressWin) {
+      try {
+        if (!this.progressWin.closed) return this.progressWin;
+      } catch {
+        // Window was destroyed
+      }
+      this.progressWin = null;
+      this.pauseButton = null; // Button was in the old window
+    }
 
     try {
       const Svc = this.getServices();
       if (!Svc?.wm) return null;
       const windows = Svc.wm.getEnumerator(null);
+      let lastMatch: any = null;
       while (windows.hasMoreElements()) {
         const win = windows.getNext();
         if (win.document?.title === 'Progress') {
-          this.progressWin = win;
-          return win;
+          lastMatch = win;
         }
       }
+      if (lastMatch) {
+        this.progressWin = lastMatch;
+      }
+      return lastMatch;
     } catch {
       // Ignore errors
     }
@@ -400,8 +476,78 @@ export class StableProgressWindow {
           win.moveTo(win.screenX, Math.max(mainWindow.screenY, newY));
         }
       }
+
+      // Inject pause button if not yet present
+      this.injectPauseButton();
     } catch {
       // Ignore resize/position errors
+    }
+  }
+
+  /**
+   * Inject pause/play and cancel buttons into the progress window
+   */
+  private injectPauseButton(): void {
+    try {
+      const win = this.findProgressWindow();
+      if (!win) return;
+      if (this.pauseButton) return;
+
+      const doc = win.document;
+      const headline = doc.getElementById('zotero-progress-text-headline');
+      if (!headline) return;
+
+      const btnStyle = 'padding: 2px 8px; font-size: 12px; cursor: pointer; border: 1px solid var(--material-border, #ccc); border-radius: 4px; background: var(--material-background, #f5f5f5); vertical-align: middle;';
+
+      // Pause/play button
+      const pauseBtn = doc.createElementNS('http://www.w3.org/1999/xhtml', 'button');
+      pauseBtn.setAttribute('id', 'zotseek-pause-btn');
+      pauseBtn.textContent = '\u23F8';
+      pauseBtn.title = 'Pause indexing';
+      pauseBtn.style.cssText = `margin-left: 8px; ${btnStyle}`;
+
+      pauseBtn.addEventListener('click', () => {
+        if (this.paused) {
+          this.resume();
+        } else {
+          this.pause();
+        }
+      });
+
+      // Cancel button
+      const cancelBtn = doc.createElementNS('http://www.w3.org/1999/xhtml', 'button');
+      cancelBtn.setAttribute('id', 'zotseek-cancel-btn');
+      cancelBtn.textContent = '\u2715';
+      cancelBtn.title = 'Cancel indexing';
+      cancelBtn.style.cssText = `margin-left: 4px; ${btnStyle}`;
+
+      cancelBtn.addEventListener('click', () => {
+        this.cancel();
+      });
+
+      headline.appendChild(pauseBtn);
+      headline.appendChild(cancelBtn);
+      this.pauseButton = pauseBtn;
+    } catch (error) {
+      this.logger.debug(`Could not inject control buttons: ${error}`);
+    }
+  }
+
+  /**
+   * Update pause button text/state
+   */
+  private updatePauseButtonState(): void {
+    if (!this.pauseButton) return;
+    try {
+      if (this.paused) {
+        this.pauseButton.textContent = '\u25B6';
+        this.pauseButton.title = 'Resume indexing';
+      } else {
+        this.pauseButton.textContent = '\u23F8';
+        this.pauseButton.title = 'Pause indexing';
+      }
+    } catch {
+      // Ignore if window was closed
     }
   }
 
@@ -411,7 +557,8 @@ export class StableProgressWindow {
   formatETA(current: number, total: number): string {
     if (current === 0) return '';
     
-    const elapsed = Date.now() - this.startTime;
+    const currentPause = this.paused ? (Date.now() - this.pausedAt) : 0;
+    const elapsed = Date.now() - this.startTime - this.totalPausedMs - currentPause;
     const avgTimePerItem = elapsed / current;
     const remaining = total - current;
     const etaMs = remaining * avgTimePerItem;

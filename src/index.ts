@@ -140,6 +140,7 @@ class ZotSeekPlugin {
       'zotseek.minSimilarityPercent': 30,  // 30% = 0.3
       'zotseek.topK': 20,
       'zotseek.autoIndex': false,
+      'zotseek.autoIndexDelay': 10,   // Seconds to wait after last item before auto-indexing
       'zotseek.indexingMode': 'full',  // 'abstract' or 'full' - full paper mode is default for better search quality
       // Version-aware chunking defaults:
       // - Zotero 8 (FF 140): Larger chunks (2000 tokens), faster WASM
@@ -810,7 +811,7 @@ class ZotSeekPlugin {
     // Use Services.prompt for Zotero 8 compatibility
     const confirmed = Services.prompt.confirm(
       Z.getMainWindow(),
-      'Update Library Index',
+      'ZotSeek - Update Library Index',
       'This will index all unindexed items in your library for semantic search.\n\n' +
       'Items that are already indexed will be skipped.\n\n' +
       'This may take several minutes depending on the number of new items.\n\n' +
@@ -949,6 +950,7 @@ class ZotSeekPlugin {
       this.logger.info(`Processing ${itemsToIndex.length} items in ${totalBatches} batches of ${CHECKPOINT_BATCH_SIZE}`);
 
       for (let batchStart = 0; batchStart < itemsToIndex.length; batchStart += CHECKPOINT_BATCH_SIZE) {
+        await progressWindow.waitIfPaused();
         if (progressWindow.isCancelled()) {
           throw new Error('Cancelled by user');
         }
@@ -999,6 +1001,7 @@ class ZotSeekPlugin {
         let chunkProcessed = 0;
 
         for (const chunk of batchChunks) {
+          await progressWindow.waitIfPaused();
           if (progressWindow.isCancelled()) {
             throw new Error('Cancelled by user');
           }
@@ -1101,15 +1104,16 @@ class ZotSeekPlugin {
       progressWindow.complete('Indexing completed successfully!', true);
 
     } catch (error: any) {
-      this.logger.error(`Indexing failed: ${error}`);
-
-      if (!progressWindow.isCancelled()) {
+      if (progressWindow.isCancelled()) {
+        this.logger.info('Indexing cancelled by user');
+        showQuickNotification('Indexing cancelled', 'default', 3000);
+      } else {
+        this.logger.error(`Indexing failed: ${error}`);
         progressWindow.error(`Indexing failed: ${error.message || error}`, false);
         // Keep window open for 10 seconds so user can see the error
         setTimeout(() => progressWindow.close(), 10000);
+        this.showAlert(`Indexing failed: ${error.message || error}`);
       }
-
-      this.showAlert(`Indexing failed: ${error.message || error}`);
     } finally {
       this.indexing = false;
     }
@@ -1315,7 +1319,7 @@ class ZotSeekPlugin {
         // Use Services.prompt for Zotero 8 compatibility
         const indexNow = Services.prompt.confirm(
           Z.getMainWindow(),
-          'Item Not Indexed',
+          'ZotSeek - Item Not Indexed',
           `"${title}" is not indexed yet.\n\nWould you like to index it now?`
         );
 

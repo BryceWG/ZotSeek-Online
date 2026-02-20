@@ -2,6 +2,24 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Configurable Auto-Index Delay** - Set how long to wait after the last item is added before auto-indexing starts (closes #21)
+  - Default: 10 seconds (configurable from 1-300 seconds in Settings)
+  - Each new item resets the countdown, preventing indexing during bulk imports
+  - Inspired by Better BibTeX's auto-export delay
+- **Pause/Play and Cancel on Manual Indexing** - Control long-running indexing operations
+  - Pause (⏸) and cancel (✕) buttons in the progress window during Update Index and Rebuild Index
+  - Pauses at batch boundaries (every 25 items) with all progress saved
+  - ETA calculation accounts for paused time
+  - Cancellation shows a quiet notification instead of an error alert
+
+### Changed
+- Auto-index batch timer now uses proper debounce (resets on each new item instead of firing after the first)
+
+---
+
 ## [1.9.0] - 2026-02-07
 
 ### Added
