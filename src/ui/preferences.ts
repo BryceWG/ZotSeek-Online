@@ -83,6 +83,7 @@ class PreferencesManager {
       excludeBooks: Z.Prefs.get('zotseek.excludeBooks', true) ?? true,
       excludeTag: Z.Prefs.get('zotseek.excludeTag', true) || 'zotseek-exclude',
       autoIndex: Z.Prefs.get('zotseek.autoIndex', true) ?? false,
+      autoIndexDelay: Z.Prefs.get('zotseek.autoIndexDelay', true) ?? 10,
     };
 
     this.logger.debug(`Loaded preferences: ${JSON.stringify(prefs)}`);
@@ -99,6 +100,11 @@ class PreferencesManager {
     // Set checkbox values
     this.setCheckboxValue('zotseek-pref-excludeBooks', prefs.excludeBooks);
     this.setCheckboxValue('zotseek-pref-autoIndex', prefs.autoIndex);
+
+    this.setInputValue('zotseek-pref-autoIndexDelay', prefs.autoIndexDelay);
+
+    // Show/hide delay row based on auto-index state
+    this.updateAutoIndexDelayVisibility(prefs.autoIndex);
 
     // Set text input values
     this.setInputValue('zotseek-pref-excludeTag', prefs.excludeTag);
@@ -232,6 +238,20 @@ class PreferencesManager {
         this.logger.info(`Auto-index changed to: ${checked}`);
         // Reload auto-index manager to apply new setting
         autoIndexManager.reload();
+        this.updateAutoIndexDelayVisibility(checked);
+      });
+    }
+
+    // Auto-index delay input
+    const autoIndexDelayInput = doc.getElementById('zotseek-pref-autoIndexDelay') as HTMLInputElement;
+    if (autoIndexDelayInput) {
+      autoIndexDelayInput.addEventListener('change', () => {
+        let value = parseInt(autoIndexDelayInput.value, 10);
+        if (isNaN(value) || value < 1) value = 1;
+        if (value > 300) value = 300;
+        autoIndexDelayInput.value = String(value);
+        Z.Prefs.set('zotseek.autoIndexDelay', value, true);
+        this.logger.info(`Auto-index delay changed to: ${value}s`);
       });
     }
 
@@ -425,6 +445,19 @@ class PreferencesManager {
     const checkbox = this.window.document.getElementById(checkboxId) as any;
     if (checkbox) {
       checkbox.checked = checked;
+    }
+  }
+
+  /**
+   * Show/hide the auto-index delay row based on checkbox state
+   */
+  private updateAutoIndexDelayVisibility(enabled: boolean): void {
+    if (!this.window) return;
+    const delayRow = this.window.document.getElementById('zotseek-autoindex-delay-row');
+    if (delayRow) {
+      (delayRow as HTMLElement).style.opacity = enabled ? '1' : '0.4';
+      const input = this.window.document.getElementById('zotseek-pref-autoIndexDelay') as HTMLInputElement;
+      if (input) input.disabled = !enabled;
     }
   }
 

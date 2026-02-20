@@ -5,6 +5,7 @@
 pref("extensions.zotero.zotseek.minSimilarityPercent", 30);
 pref("extensions.zotero.zotseek.topK", 20);
 pref("extensions.zotero.zotseek.autoIndex", false);
+pref("extensions.zotero.zotseek.autoIndexDelay", 10);
 
 // Indexing mode: "abstract" (title+abstract) or "full" (abstract + PDF sections)
 pref("extensions.zotero.zotseek.indexingMode", "abstract");

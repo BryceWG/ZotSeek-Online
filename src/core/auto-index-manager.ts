@@ -33,8 +33,6 @@ export class AutoIndexManager {
 
   // Batch processing
   private batchTimer: any = null;
-  private batchDelayMs: number = 5000; // Wait 5 seconds to batch multiple items
-
   // Callback to trigger indexing
   private indexCallback: IndexCallback | null = null;
 
@@ -375,17 +373,22 @@ export class AutoIndexManager {
   }
 
   /**
-   * Schedule batch processing
+   * Schedule batch processing (debounced)
+   * Resets timer on each call so indexing only fires
+   * after items stop arriving for the configured delay.
    */
   private scheduleBatch(): void {
+    // Reset timer on each new item (proper debounce)
     if (this.batchTimer) {
-      // Already scheduled
-      return;
+      clearTimeout(this.batchTimer);
     }
+
+    // Read delay from preference at schedule time (dynamic)
+    const delaySec = Math.max(1, Zotero.Prefs.get('zotseek.autoIndexDelay', true) ?? 10);
 
     this.batchTimer = setTimeout(() => {
       this.processBatch();
-    }, this.batchDelayMs);
+    }, delaySec * 1000);
   }
 
   /**
