@@ -1000,6 +1000,7 @@ class ZotSeekPlugin {
         const embeddingMap = new Map<string, { embedding: number[]; modelId: string }>();
         let chunkProcessed = 0;
 
+        let failedChunks = 0;
         for (const chunk of batchChunks) {
           await progressWindow.waitIfPaused();
           if (progressWindow.isCancelled()) {
@@ -1013,15 +1014,35 @@ class ZotSeekPlugin {
             itemsToIndex.length
           );
 
-          const result = await embeddingPipeline.embed(chunk.text);
-          if (result) {
-            embeddingMap.set(chunk.id, result);
+          try {
+            const result = await embeddingPipeline.embed(chunk.text);
+            if (result) {
+              embeddingMap.set(chunk.id, result);
+            }
+          } catch (embedException: any) {
+            // Retry once before giving up on this chunk
+            try {
+              this.logger.warn(`Embedding failed for chunk ${chunk.id}, retrying: ${embedException?.message || embedException}`);
+              await new Promise(resolve => setTimeout(resolve, 500));
+              const retryResult = await embeddingPipeline.embed(chunk.text);
+              if (retryResult) {
+                embeddingMap.set(chunk.id, retryResult);
+              }
+            } catch {
+              failedChunks++;
+              this.logger.error(`Skipping chunk ${chunk.id} after retry failure: ${embedException?.message || embedException}`);
+            }
           }
 
           // Yield to UI thread periodically
           if (chunkProcessed % 5 === 0) {
             await new Promise(resolve => setTimeout(resolve, 0));
           }
+        }
+
+        if (failedChunks > 0) {
+          this.logger.warn(`Batch ${batchNumber}: ${failedChunks} chunks failed embedding and were skipped`);
+          progressWindow.addLine(`⚠ ${failedChunks} chunks skipped (embedding error)`);
         }
 
         // === STEP 3: Save this batch (CHECKPOINT) ===
@@ -1206,12 +1227,30 @@ class ZotSeekPlugin {
       // Generate embeddings with progress updates
       const embeddingMap = new Map<string, { embedding: number[]; modelId: string }>();
       let processed = 0;
+      let failedChunks = 0;
 
       for (const item of textsForEmbedding) {
         processed++;
         itemRow.setText(`Embedding ${processed}/${textsForEmbedding.length}...`);
-        const result = await embeddingPipeline.embed(item.text);
-        embeddingMap.set(item.id, result);
+        try {
+          const result = await embeddingPipeline.embed(item.text);
+          if (result) {
+            embeddingMap.set(item.id, result);
+          }
+        } catch (embedException: any) {
+          // Retry once before giving up
+          try {
+            this.logger.warn(`Auto-index embed failed for ${item.id}, retrying: ${embedException?.message || embedException}`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            const retryResult = await embeddingPipeline.embed(item.text);
+            if (retryResult) {
+              embeddingMap.set(item.id, retryResult);
+            }
+          } catch {
+            failedChunks++;
+            this.logger.error(`Auto-index skipping chunk ${item.id}: ${embedException?.message || embedException}`);
+          }
+        }
       }
 
       // Store embeddings with chunk metadata
@@ -1248,11 +1287,12 @@ class ZotSeekPlugin {
       // Store in vector store
       await this.vectorStore!.putBatch(paperEmbeddings);
 
-      this.logger.info(`Auto-indexed ${extractedItems.length} items (${paperEmbeddings.length} chunks)`);
+      this.logger.info(`Auto-indexed ${extractedItems.length} items (${paperEmbeddings.length} chunks, ${failedChunks} failed)`);
 
       // Show success - use try-catch for setIcon as it may not exist in all Zotero versions
       try { itemRow.setIcon('chrome://zotero/skin/tick.png'); } catch { /* ignore */ }
-      itemRow.setText(`✓ ${paperEmbeddings.length} chunks indexed`);
+      const failedNote = failedChunks > 0 ? ` (${failedChunks} chunks skipped)` : '';
+      itemRow.setText(`✓ ${paperEmbeddings.length} chunks indexed${failedNote}`);
       progressWin.startCloseTimer(3000);
 
     } catch (error: any) {

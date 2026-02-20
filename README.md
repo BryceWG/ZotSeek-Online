@@ -24,7 +24,8 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 - 🔄 **Auto-Index** - Automatically index new papers when you add them to your library
 - 🗑️ **Auto-Cleanup** - Embeddings automatically removed when items are deleted or trashed
 - 🚫 **Tag-Based Exclusion** - Tag items with `zotseek-exclude` to skip them during indexing
-- 💾 **Crash-Resilient** - Checkpoint saving every 25 items, resume after interruption
+- ⏸️ **Pause & Cancel** - Pause or cancel long-running indexing operations at any time
+- 💾 **Crash-Resilient** - Checkpoint saving every 25 items, resume after interruption, skips problematic chunks automatically
 - 🔌 **Plugin API** - Other Zotero plugins can [call ZotSeek's search programmatically](docs/API.md)
 - ⚙️ **Configurable** - Customize via Zotero Settings → ZotSeek (also accessible from search dialog)
 
@@ -426,7 +427,8 @@ Install via: Zotero → Tools → Add-ons → Install Add-on From File
 - 📊 Current paper being processed
 - 📈 Progress bar with percentage
 - ⏱️ ETA countdown
-- ❌ Cancel button
+- ⏸ Pause/resume button (pauses at batch boundaries, all progress saved)
+- ✕ Cancel button (shows quiet notification, no error alert)
 
 ### Find Similar Documents
 
@@ -460,9 +462,12 @@ ZotSeek can automatically index papers as you add them to your library:
 **How it works:**
 - Detects when new items are added to your library
 - Waits for PDF attachments to arrive (with automatic retry)
-- Batches multiple items together (5 second delay)
+- Batches multiple items together with a configurable delay (default: 10 seconds)
+- Each new item resets the countdown, preventing indexing during bulk imports
 - Shows a brief progress indicator while indexing
 - Respects your indexing mode setting (Abstract or Full Document)
+
+**Configuring the delay:** Go to **Zotero Settings > ZotSeek** and adjust the **Auto-index delay** slider (1-300 seconds). Longer delays are useful when importing large batches via browser connector or RSS feeds.
 
 ### Managing the Index
 
@@ -540,6 +545,7 @@ Preferences are stored in Zotero's preferences system:
 | `zotseek.minSimilarityPercent` | `30` | Minimum similarity % to show in results |
 | `zotseek.topK` | `20` | Maximum number of results |
 | `zotseek.autoIndex` | `false` | Automatically index new papers when added |
+| `zotseek.autoIndexDelay` | `10` | Seconds to wait after last item before auto-indexing (1-300) |
 
 **Indexing Settings:**
 

@@ -15,6 +15,13 @@ All notable changes to ZotSeek - Semantic Search for Zotero will be documented i
   - ETA calculation accounts for paused time
   - Cancellation shows a quiet notification instead of an error alert
 
+### Fixed
+- **Resilient Embedding** - Single chunk failures no longer crash the entire indexing operation (fixes #19)
+  - Each chunk gets one automatic retry before being skipped
+  - Skipped chunks are logged and reported in the progress window
+  - Remaining items continue indexing normally
+  - Applies to both manual and auto-indexing
+
 ### Changed
 - Auto-index batch timer now uses proper debounce (resets on each new item instead of firing after the first)
 

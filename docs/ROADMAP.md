@@ -17,8 +17,11 @@ Features that have shipped. Kept here for reference.
 | Tag-based exclusion (`zotseek-exclude`) | v1.9.0 | [#17](https://github.com/introfini/ZotSeek/issues/17) |
 | Auto-cleanup on delete/trash | v1.9.0 | — |
 | "Remove from ZotSeek Index" context menu | v1.9.0 | [#17](https://github.com/introfini/ZotSeek/issues/17) |
-| WebGPU detection with automatic CPU fallback | — | [#2](https://github.com/introfini/ZotSeek/issues/2) |
-| JavaScript API on `Zotero.ZotSeek.api` (search, findSimilar, indexItems, getStats) | — | [#13](https://github.com/introfini/ZotSeek/issues/13) |
+| Configurable auto-index delay (debounce, 1-300s) | next | [#21](https://github.com/introfini/ZotSeek/issues/21) |
+| Pause/play and cancel during manual indexing | next | -- |
+| Resilient embedding (skip failed chunks with retry) | next | [#19](https://github.com/introfini/ZotSeek/issues/19) |
+| WebGPU detection with automatic CPU fallback | -- | [#2](https://github.com/introfini/ZotSeek/issues/2) |
+| JavaScript API on `Zotero.ZotSeek.api` (search, findSimilar, indexItems, getStats) | -- | [#13](https://github.com/introfini/ZotSeek/issues/13) |
 
 ## Performance & Indexing
 
@@ -78,4 +81,4 @@ Add automated tests for core components (vector store, search engine, chunker) t
 
 ---
 
-*Last updated: 2026-02-10*
+*Last updated: 2026-02-20*
