@@ -2,6 +2,13 @@
 
 All notable changes to ZotSeek - Semantic Search for Zotero will be documented in this file.
 
+## [Unreleased]
+
+### Improved
+- **Identify Failed Items During Indexing** - When chunks fail to embed, the progress window and debug log now show the titles of affected items instead of just a count (addresses feedback in #19)
+
+---
+
 ## [1.10.0] - 2026-02-20
 
 ### Added

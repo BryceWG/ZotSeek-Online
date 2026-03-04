@@ -1001,6 +1001,7 @@ class ZotSeekPlugin {
         let chunkProcessed = 0;
 
         let failedChunks = 0;
+        const failedItems = new Set<string>();
         for (const chunk of batchChunks) {
           await progressWindow.waitIfPaused();
           if (progressWindow.isCancelled()) {
@@ -1022,7 +1023,7 @@ class ZotSeekPlugin {
           } catch (embedException: any) {
             // Retry once before giving up on this chunk
             try {
-              this.logger.warn(`Embedding failed for chunk ${chunk.id}, retrying: ${embedException?.message || embedException}`);
+              this.logger.warn(`Embedding failed for chunk ${chunk.id} ("${chunk.title}"), retrying: ${embedException?.message || embedException}`);
               await new Promise(resolve => setTimeout(resolve, 500));
               const retryResult = await embeddingPipeline.embed(chunk.text);
               if (retryResult) {
@@ -1030,7 +1031,8 @@ class ZotSeekPlugin {
               }
             } catch {
               failedChunks++;
-              this.logger.error(`Skipping chunk ${chunk.id} after retry failure: ${embedException?.message || embedException}`);
+              failedItems.add(chunk.title);
+              this.logger.error(`Skipping chunk ${chunk.id} ("${chunk.title}") after retry failure: ${embedException?.message || embedException}`);
             }
           }
 
@@ -1041,8 +1043,9 @@ class ZotSeekPlugin {
         }
 
         if (failedChunks > 0) {
-          this.logger.warn(`Batch ${batchNumber}: ${failedChunks} chunks failed embedding and were skipped`);
-          progressWindow.addLine(`⚠ ${failedChunks} chunks skipped (embedding error)`);
+          const itemList = Array.from(failedItems).join(', ');
+          this.logger.warn(`Batch ${batchNumber}: ${failedChunks} chunks failed embedding and were skipped in: ${itemList}`);
+          progressWindow.addLine(`⚠ ${failedChunks} chunks skipped in: ${itemList}`);
         }
 
         // === STEP 3: Save this batch (CHECKPOINT) ===
@@ -1229,6 +1232,7 @@ class ZotSeekPlugin {
       let processed = 0;
       let failedChunks = 0;
 
+      const failedItems = new Set<string>();
       for (const item of textsForEmbedding) {
         processed++;
         itemRow.setText(`Embedding ${processed}/${textsForEmbedding.length}...`);
@@ -1240,7 +1244,7 @@ class ZotSeekPlugin {
         } catch (embedException: any) {
           // Retry once before giving up
           try {
-            this.logger.warn(`Auto-index embed failed for ${item.id}, retrying: ${embedException?.message || embedException}`);
+            this.logger.warn(`Auto-index embed failed for ${item.id} ("${item.title}"), retrying: ${embedException?.message || embedException}`);
             await new Promise(resolve => setTimeout(resolve, 500));
             const retryResult = await embeddingPipeline.embed(item.text);
             if (retryResult) {
@@ -1248,7 +1252,8 @@ class ZotSeekPlugin {
             }
           } catch {
             failedChunks++;
-            this.logger.error(`Auto-index skipping chunk ${item.id}: ${embedException?.message || embedException}`);
+            failedItems.add(item.title);
+            this.logger.error(`Auto-index skipping chunk ${item.id} ("${item.title}"): ${embedException?.message || embedException}`);
           }
         }
       }
@@ -1287,6 +1292,10 @@ class ZotSeekPlugin {
       // Store in vector store
       await this.vectorStore!.putBatch(paperEmbeddings);
 
+      if (failedChunks > 0) {
+        const itemList = Array.from(failedItems).join(', ');
+        this.logger.warn(`Auto-index: ${failedChunks} chunks failed in: ${itemList}`);
+      }
       this.logger.info(`Auto-indexed ${extractedItems.length} items (${paperEmbeddings.length} chunks, ${failedChunks} failed)`);
 
       // Show success - use try-catch for setIcon as it may not exist in all Zotero versions
