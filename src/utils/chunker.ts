@@ -1,7 +1,7 @@
 /**
- * Chunker - Semantic section-based chunking for nomic-embed-text-v1.5
+ * Chunker - Semantic section-based chunking for online embedding APIs
  * 
- * Philosophy: With 8K context, chunk by SEMANTIC PURPOSE, not token limits.
+ * Philosophy: Chunk by semantic purpose, not only token limits.
  * This improves retrieval quality by creating focused embeddings.
  * 
  * Two clear indexing modes:
@@ -41,11 +41,8 @@ export interface ChunkOptions {
 // Two clear modes
 export type IndexingMode = 'abstract' | 'full';
 
-// Default options for nomic-embed-v1.5 (8192 token limit)
-// PERFORMANCE: Smaller chunks embed MUCH faster due to O(n²) attention
-// - 7000 tokens: ~45 seconds per chunk (too slow!)
-// - 500 tokens: ~0.3-0.5 seconds per chunk (very fast!)
-// With paragraph-level chunking, we need many more chunks
+// Default options for API-backed embedding requests
+// Smaller chunks improve retrieval quality and keep request payloads manageable
 const DEFAULT_OPTIONS: Required<ChunkOptions> = {
   maxTokens: 800,     // ~2400 chars - typical paragraph size, very fast embedding
   maxChunks: 100,     // Allow up to 100 paragraphs per paper (covers most papers)
@@ -61,7 +58,7 @@ const SECTION_PATTERNS = {
 };
 
 /**
- * Estimate token count for nomic tokenizer
+ * Estimate token count for request chunk sizing
  * Conservative estimate: ~1.3 tokens per word for English academic text
  */
 export function estimateTokens(text: string): number {
@@ -369,7 +366,7 @@ function splitIntoSemanticSections(fulltext: string): {
 }
 
 /**
- * Main chunking function - simplified for nomic-embed-v1.5
+ * Main chunking function for provider-backed embeddings
  * 
  * @param title - Paper title (prepended to each chunk for context)
  * @param abstract - Paper abstract

@@ -342,10 +342,8 @@ export class ZotSeekDialogVTable {
       const modeLabel = this.searchMode === 'hybrid' ? 'Hybrid' :
                         this.searchMode === 'semantic' ? 'Semantic' : 'Keyword';
 
-      // Initialize search engine if needed (hybrid search will init as needed)
-      if (this.searchMode !== 'keyword' && !searchEngine.isReady()) {
-        this.setStatus('Loading AI model (first time may take a moment)...');
-        await searchEngine.init();
+      if (this.searchMode !== 'keyword') {
+        this.setStatus('Searching with configured embedding provider...');
       }
 
       // Determine if we need all chunks (location mode) or aggregated results (section mode)

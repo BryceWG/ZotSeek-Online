@@ -106,35 +106,12 @@ class SimilarDocumentsDialog {
         throw new Error('Zotero not available');
       }
 
-      // Initialize search engine if needed
-      this.logger.debug('Checking if search engine is initialized...');
-      try {
-        const isInitialized = searchEngine && searchEngine.isInitialized && searchEngine.isInitialized();
-        this.logger.debug('Search engine initialized status:', isInitialized);
-        
-        if (!isInitialized) {
-          this.logger.debug('Search engine not initialized, initializing...');
-          this.setStatus('Loading AI model...', 'loading');
-          await searchEngine.init();
-          this.logger.debug('Search engine initialized');
-        } else {
-          this.logger.debug('Search engine already initialized');
-        }
-      } catch (initError) {
-        this.logger.error('Error checking/initializing search engine:', initError);
-        // Try to initialize anyway
-        this.logger.debug('Attempting to initialize search engine...');
-        this.setStatus('Loading AI model...', 'loading');
-        await searchEngine.init();
-        this.logger.debug('Search engine initialized after error');
-      }
-
       // Get source document title
       const sourceTitle = this.sourceItem.getField('title');
       this.setSourceInfo(sourceTitle);
 
       // Find similar documents
-      this.setStatus('Searching...', 'loading');
+      this.setStatus('Comparing indexed documents...', 'loading');
       
       // Get the numeric item ID
       const itemId = this.sourceItem.id;

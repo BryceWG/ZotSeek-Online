@@ -1,8 +1,8 @@
 # ZotSeek Plugin API
 
-ZotSeek exposes a JavaScript API at `Zotero.ZotSeek.api` that other Zotero plugins can use to run local semantic searches against the user's indexed library.
+ZotSeek exposes a JavaScript API at `Zotero.ZotSeek.api` that other Zotero plugins can use to run semantic searches against the user's indexed library.
 
-All operations are local — embeddings are generated via Transformers.js (ONNX Runtime, WASM) and stored in a local SQLite file. No network calls are made.
+Embeddings are stored in a local SQLite file, while query and indexing embeddings are generated through the user's configured online provider.
 
 ## Checking availability
 
@@ -12,19 +12,17 @@ if (!Zotero.ZotSeek?.api) {
   throw new Error("ZotSeek plugin is not installed");
 }
 
-// Optionally check if the pipeline is already warm
+// Optionally check if the pipeline is already configured
 if (Zotero.ZotSeek.api.isReady()) {
-  // Pipeline loaded, searches will be fast
+  // Provider settings are ready
 }
 ```
 
-`isReady()` returns `true` when the embedding pipeline is loaded and the vector store is initialized. The pipeline loads lazily on first use — you don't need to wait for `isReady()` before calling `search()`.
+`isReady()` returns `true` when the embedding pipeline is configured and the vector store is initialized. The pipeline initializes lazily on first use — you don't need to wait for `isReady()` before calling `search()`.
 
 ## Cold start
 
-The embedding pipeline (ONNX model, ~30s to load) initializes automatically on the first call to `search()`. Subsequent calls are instant. If you want to pre-warm the pipeline, call `search()` with a dummy query during your plugin's startup.
-
-Methods that don't need the embedding pipeline (`findSimilar`, `getStats`, `isReady`) are available immediately.
+The embedding pipeline validates the configured provider/API key automatically on the first call to `search()`. Methods that don't need query embedding (`findSimilar`, `getStats`, `isReady`) are available immediately.
 
 ## Methods
 
@@ -124,7 +122,7 @@ interface VectorStoreStats {
   indexedPapers: number;
   totalChunks: number;
   avgChunksPerPaper: number;
-  modelId: string;              // e.g. "Xenova/nomic-embed-text-v1.5"
+  modelId: string;              // e.g. "voyage:voyage-3.5-lite"
   lastIndexed: Date | null;
   storageUsedBytes: number;
   chunksWithLocation: number;   // Chunks that have page numbers
@@ -134,7 +132,7 @@ interface VectorStoreStats {
 
 ### `isReady()`
 
-Check if the embedding pipeline is loaded and ready. Useful to show loading state in your UI, but not required before calling `search()`.
+Check if the embedding pipeline is configured and ready. Useful to show loading state in your UI, but not required before calling `search()`.
 
 ```js
 const ready = Zotero.ZotSeek.api.isReady();
@@ -151,8 +149,7 @@ async function searchWithZotSeek(query) {
     throw new Error("ZotSeek plugin is not installed");
   }
 
-  // search() auto-initializes the pipeline on first call (~30s)
-  // Subsequent calls are instant
+  // search() auto-initializes the provider-backed pipeline on first call
   const results = await Zotero.ZotSeek.api.search(query, {
     topK: 10,
     minSimilarity: 0.4,
@@ -173,4 +170,4 @@ async function searchWithZotSeek(query) {
 - **This is an in-process JavaScript API, not a web service.** It can only be called from code running inside Zotero — other plugins, the Browser Toolbox console, or via the MCP Bridge's `zotero_execute_js`. External tools (Python scripts, CLI, HTTP requests) cannot call it directly.
 - All methods are async except `isReady()`.
 - `itemId` is Zotero's internal numeric ID (local to this profile). `itemKey` is the portable string key that syncs across libraries.
-- The embedding model is `Xenova/nomic-embed-text-v1.5` (768 dimensions). Query text is automatically prefixed with `search_query:` for asymmetric search.
+- The configured provider/model must match the model used to build the stored index. If users change provider or model, they should rebuild the index before semantic search.

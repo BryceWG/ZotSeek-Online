@@ -73,18 +73,9 @@ export class ZotSeekDialog {
         this.window.showProgress('Initializing search engine...');
       }
 
-      // Ensure the search engine is initialized
-      if (!searchEngine.isReady()) {
-        this.logger.info('Initializing embedding pipeline...');
-        if (this.isWindowOpen()) {
-          this.window.showProgress('Loading AI model (first time may take a few seconds)...');
-        }
-        await searchEngine.init();
-      }
-
       // Show search progress
       if (this.isWindowOpen()) {
-        this.window.showProgress('Searching...');
+        this.window.showProgress('Searching with configured embedding provider...');
       }
 
       // Perform the search

@@ -200,14 +200,73 @@
       </html:div>
     </html:div>
   </html:div>
+</groupbox>
 
-  <!-- Zotero 7 Performance Warning -->
-  <vbox id="zotseek-perf-warning" class="zotseek-warning-box" style="display: none; margin-top: 8px; padding: 10px; border-radius: 6px; border-width: 1px; border-style: solid;">
-    <html:p style="margin: 0; font-size: 11px; color: var(--zotseek-orange);">
-      <html:b>⚠️ Zotero 7 Note:</html:b> Full paper indexing is slower on Zotero 7 due to WASM differences.
-      Consider using Abstract mode for large libraries.
+<!-- Embedding Provider -->
+<groupbox>
+  <label><html:h2>Embedding API</html:h2></label>
+
+  <html:div class="zotseek-settings-box" style="border-radius: 6px; padding: 12px; border-width: 1px; border-style: solid;">
+    <html:div style="display: grid; grid-template-columns: 150px minmax(180px, 280px) 1fr; gap: 10px 12px; align-items: center;">
+      <html:label for="zotseek-pref-embeddingProvider" style="color: var(--zotseek-text-primary);">Provider</html:label>
+      <menulist id="zotseek-pref-embeddingProvider" native="true" style="min-width: 180px;">
+        <menupopup>
+          <menuitem label="Voyage AI" value="voyage" />
+        </menupopup>
+      </menulist>
+      <html:span style="font-size: 11px; color: var(--zotseek-text-secondary);">Embeddings are generated through the selected online provider.</html:span>
+
+      <html:label for="zotseek-pref-embeddingModel" style="color: var(--zotseek-text-primary);">Model</html:label>
+      <menulist id="zotseek-pref-embeddingModel" native="true" style="min-width: 220px;">
+        <menupopup>
+          <menuitem label="voyage-3.5-lite" value="voyage-3.5-lite" />
+          <menuitem label="voyage-3.5" value="voyage-3.5" />
+          <menuitem label="voyage-3-large" value="voyage-3-large" />
+          <menuitem label="voyage-4-lite" value="voyage-4-lite" />
+          <menuitem label="voyage-4" value="voyage-4" />
+          <menuitem label="voyage-4-large" value="voyage-4-large" />
+          <menuitem label="voyage-code-3" value="voyage-code-3" />
+          <menuitem label="voyage-finance-2" value="voyage-finance-2" />
+          <menuitem label="voyage-law-2" value="voyage-law-2" />
+        </menupopup>
+      </menulist>
+      <html:span id="zotseek-embedding-model-help" style="font-size: 11px; color: var(--zotseek-text-secondary);">Fast and cost-efficient general-purpose retrieval model.</html:span>
+
+      <html:label for="zotseek-pref-embeddingApiKey" style="color: var(--zotseek-text-primary);">API key</html:label>
+      <html:input type="password"
+                  id="zotseek-pref-embeddingApiKey"
+                  class="zotseek-input"
+                  placeholder="voyage-..."
+                  style="width: 220px; padding: 4px 8px; border-radius: 4px; border-width: 1px; border-style: solid;" />
+      <html:span style="font-size: 11px; color: var(--zotseek-text-secondary);">Stored in Zotero preferences and used for indexing and query search.</html:span>
+    </html:div>
+
+    <html:p style="margin: 12px 0 0 0; font-size: 11px; color: var(--zotseek-text-secondary);">
+      Current setting: <html:strong id="zotseek-embedding-current-value">Voyage AI / voyage-3.5-lite</html:strong>
+      <html:span style="margin-left: 12px;">Endpoint: <html:code id="zotseek-embedding-endpoint">https://api.voyageai.com/v1/embeddings</html:code></html:span>
     </html:p>
-  </vbox>
+    <html:p style="margin: 6px 0 0 0; font-size: 11px; color: var(--zotseek-text-secondary);">
+      If you change provider or model, rebuild the index so stored embeddings match future searches.
+    </html:p>
+  </html:div>
+
+  <html:div id="zotseek-api-warning" class="zotseek-warning-box" style="display: none; border-radius: 6px; padding: 12px; margin-top: 10px; border-width: 1px; border-style: solid;">
+    <html:strong style="color: var(--zotseek-amber);">API key required</html:strong>
+    <html:p style="color: var(--zotseek-text-primary); margin: 8px 0 0 0;">
+      Add your Voyage AI API key before indexing papers or running semantic searches.
+    </html:p>
+  </html:div>
+
+  <html:div id="zotseek-model-warning" class="zotseek-warning-box" style="display: none; border-radius: 6px; padding: 12px; margin-top: 10px; border-width: 1px; border-style: solid;">
+    <html:strong style="color: var(--zotseek-amber);">Embedding model mismatch</html:strong>
+    <html:p style="color: var(--zotseek-text-primary); margin: 8px 0 4px 0;">
+      Your index was built with <html:strong id="zotseek-warning-indexed-model">Voyage AI / voyage-3.5-lite</html:strong>,
+      but your current setting is <html:strong id="zotseek-warning-current-model">Voyage AI / voyage-3.5</html:strong>.
+    </html:p>
+    <html:p style="color: var(--zotseek-text-secondary); margin: 4px 0 0 0;">
+      Click "Rebuild Index" below to regenerate embeddings with the new provider/model.
+    </html:p>
+  </html:div>
 </groupbox>
 
 <!-- Auto-Indexing -->

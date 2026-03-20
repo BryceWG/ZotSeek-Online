@@ -10,7 +10,7 @@
 import { Logger } from '../utils/logger';
 import { PaperEmbedding, IVectorStore, getVectorStore } from './storage-factory';
 import { VectorStoreSQLite, TextSourceType } from './vector-store-sqlite';
-import { EmbeddingPipeline, embeddingPipeline } from './embedding-pipeline';
+import { EmbeddingPipeline, embeddingPipeline, formatEmbeddingModelId } from './embedding-pipeline';
 
 export interface SearchResult {
   itemId: number;
@@ -113,6 +113,25 @@ export class SearchEngine {
     this.logger.info(`Searching for: "${query.substring(0, 50)}..."`);
     const startTime = Date.now();
 
+    const store = this.getStore();
+    if (!store.isReady()) {
+      this.logger.info('Initializing vector store for search...');
+      await store.init();
+    }
+
+    const storeStats = await store.getStats();
+    if (storeStats.indexedPapers === 0) {
+      this.logger.info('Search skipped because the index is empty');
+      return [];
+    }
+
+    const currentModelId = this.pipeline.getModelId();
+    if (storeStats.modelId !== 'none' && storeStats.modelId !== currentModelId) {
+      throw new Error(
+        `Your index was built with ${formatEmbeddingModelId(storeStats.modelId)}, but search is configured to use ${formatEmbeddingModelId(currentModelId)}. Rebuild the index before searching.`
+      );
+    }
+
     // Auto-initialize pipeline if needed (supports cold-start from API)
     if (!this.pipeline.isReady()) {
       this.logger.info('Auto-initializing embedding pipeline for search...');
@@ -136,7 +155,6 @@ export class SearchEngine {
     }
 
     // Get cached embeddings for fast search
-    const store = this.getStore();
     let embeddings: Array<{
       itemId: number;
       chunkIndex: number;

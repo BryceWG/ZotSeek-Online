@@ -10,8 +10,8 @@ const manifestPath = path.resolve(rootDir, 'manifest.json');
 const updateJsonPath = path.resolve(rootDir, 'update.json');
 
 // GitHub repo info for update URLs
-const GITHUB_OWNER = 'introfini';
-const GITHUB_REPO = 'ZotSeek';
+const GITHUB_OWNER = 'BryceWG';
+const GITHUB_REPO = 'ZotSeek-Online';
 
 /**
  * Generate update.json from manifest.json version
@@ -23,7 +23,7 @@ function generateUpdateJson(version) {
         updates: [
           {
             version: version,
-            update_link: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${version}/zotseek-${version}.xpi`,
+            update_link: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${version}/zotseek-online-${version}.xpi`,
             applications: {
               zotero: {
                 strict_min_version: '6.999'
@@ -53,7 +53,7 @@ function syncManifestVersion(version) {
  * Create XPI package
  */
 async function createXpi(version) {
-  const xpiName = `zotseek-${version}.xpi`;
+  const xpiName = `zotseek-online-${version}.xpi`;
   const xpiPath = path.resolve(rootDir, xpiName);
 
   console.log(`\nPackaging ${xpiName}...`);
@@ -77,7 +77,7 @@ async function createXpi(version) {
 }
 
 async function release() {
-  console.log('ZotSeek Release\n');
+  console.log('ZotSeek Online Release\n');
 
   // Step 1: Run bumpp to get new version (interactive)
   console.log('Step 1: Version bump\n');

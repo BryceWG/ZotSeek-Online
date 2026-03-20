@@ -1,8 +1,8 @@
-# ZotSeek | AI-Powered Semantic Search for Zotero
+# ZotSeek Online | AI-Powered Semantic Search for Zotero
 
-Find similar papers by **meaning**, not just keywords. 100% local, no data leaves your machine.
+Find similar papers by **meaning**, not just keywords, using configurable online embedding APIs.
 
-> **Status:** ✅ Stable release with Transformers.js running locally in Zotero 7 & 8
+> **Status:** ✅ Stable release with provider/model/API key settings for online embeddings
 
 ![ZotSeek Search Dialog](docs/images/search-dialog-by-section.png)
 
@@ -10,7 +10,7 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 
 ## Features
 
-- 🔒 **100% Local** - No data sent to cloud, works completely offline
+- 🔌 **Online Embeddings** - Use a configurable provider and model for semantic indexing
 - 🧠 **True Semantic Search** - Find papers by meaning, not just keywords
 - 🔍 **Find Similar Documents** - Right-click any paper → discover related research
 - 📖 **Search from PDF Selection** - Select text while reading → right-click → find documents about that concept
@@ -33,21 +33,19 @@ Find similar papers by **meaning**, not just keywords. 100% local, no data leave
 
 ## Privacy & Security
 
-ZotSeek is designed with privacy as a core principle:
+ZotSeek stores embeddings locally in `zotseek.sqlite`, but indexing and query embedding generation now use the configured online provider.
 
 | Aspect | Guarantee |
 |--------|-----------|
-| **AI Model** | Bundled with the plugin (131MB) — no downloads, no API calls |
-| **Processing** | All AI inference runs locally on your CPU/GPU |
-| **Your Papers** | Only indexes items from your local Zotero library |
-| **Network** | Zero network requests for search or indexing |
-| **Storage** | Embeddings saved locally in `zotseek.sqlite` in your Zotero data folder |
-| **Offline** | Works completely offline after installation |
+| **Embedding Provider** | Configurable in Settings with your own API key |
+| **Your Papers** | Extracted text is sent to the selected provider only for embedding generation |
+| **Network** | Semantic indexing and semantic search require provider API calls |
+| **Storage** | Embeddings are saved locally in `zotseek.sqlite` in your Zotero data folder |
+| **Control** | You choose the provider, model, and API key |
 
 **What this means:**
-- Your research never leaves your machine
-- No cloud services, no API keys, no subscriptions
-- No telemetry or usage tracking
+- You need a provider API key to index or run semantic search
+- Embeddings remain cached locally after generation
 - Uninstalling the plugin removes all ZotSeek data
 
 ---
@@ -83,11 +81,11 @@ ZotSeek is designed with privacy as a core principle:
 ```mermaid
 flowchart TD
     subgraph INDEX["1️⃣ INDEX"]
-        A[📄 Paper] --> B[🤖 AI Model] --> C[768 numbers]
+        A[📄 Paper] --> B[🌐 Embedding API] --> C[Vectors]
     end
     
     subgraph SEARCH["2️⃣ SEARCH"]
-        D[🔍 Query] --> E[Query → 768 numbers]
+        D[🔍 Query] --> E[Query → vector]
         E --> F{Compare all papers}
         F --> G[📊 Ranked results]
     end
@@ -95,7 +93,7 @@ flowchart TD
     C -.->|stored| F
 ```
 
-**How it works:** Each paper becomes 768 numbers capturing its meaning. To search, we convert your query to numbers and find papers with similar numbers.
+**How it works:** Each paper becomes a semantic vector capturing its meaning. To search, ZotSeek embeds your query with the configured provider and compares it against locally stored vectors.
 
 ### Step-by-Step Process
 
@@ -109,12 +107,10 @@ For each paper:
      — OR —
      Extract PDF text page-by-page with exact page numbers (Full Document mode)
   2. Split into paragraphs, filter out References/Bibliography
-  3. Send to local AI model (nomic-embed-text-v1.5)
-  4. Model outputs 768 numbers per chunk (the "embedding")
+  3. Send chunks to the configured embedding API
+  4. Provider returns one embedding vector per chunk
   5. Save embeddings + location metadata to local database (zotseek.sqlite)
 ```
-
-**Time:** ~3 seconds per chunk
 
 #### 2️⃣ Finding Similar Documents
 
@@ -266,32 +262,19 @@ For detailed chunking documentation, see [docs/SEARCH_ARCHITECTURE.md](docs/SEAR
 
 ---
 
-## The AI Model
+## Embedding Providers
 
-### nomic-embed-text-v1.5
+ZotSeek now uses online embedding APIs. In Settings you can choose:
 
-| Property | Value |
-|----------|-------|
-| **Name** | [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) |
-| **Size** | 131 MB (quantized) |
-| **Dimensions** | 768 (Matryoshka - can truncate to 256/128) |
-| **Context Window** | 8192 tokens |
-| **Speed** | ~3 seconds per chunk |
-| **Quality** | Outperforms OpenAI text-embedding-3-small on MTEB |
-| **Special Feature** | Instruction-aware prefixes for queries vs documents |
+- provider
+- model
+- API key
 
-### Why This Model?
-
-- ✅ **Superior retrieval quality** - Outperforms OpenAI text-embedding-3-small and jina-v2 on MTEB benchmarks
-- ✅ **8K context window** - Most papers fit in 1-3 chunks (vs 10-20 with 512-token models)
-- ✅ **Instruction-aware** - Uses `search_document:` for indexing and `search_query:` for queries
-- ✅ **Matryoshka embeddings** - 768 dims can be truncated to 256/128 with minimal quality loss
-- ✅ **Fully open** - Open weights, open training data, reproducible
-- ✅ **Works in Zotero** - Compatible with Transformers.js v3 via wasmPaths configuration
+The current implementation ships with Voyage AI models such as `voyage-3.5-lite`, `voyage-3.5`, `voyage-3-large`, and the Voyage 4 family.
 
 ### How Embeddings Work
 
-The model converts text into 768 numbers that capture semantic meaning:
+The provider converts text into vectors that capture semantic meaning:
 
 ```
 "Machine learning for medical diagnosis"  →  [0.023, -0.045, 0.012, ...]
@@ -314,23 +297,14 @@ flowchart LR
         A <--> C[Search]
     end
     
-    subgraph Worker["ChromeWorker"]
-        D[Transformers.js]
-        E[nomic-embed-v1.5]
+    subgraph Provider["Embedding Provider"]
+        D[Provider API]
+        E[Configured Model]
     end
     
-    A -->|text| Worker
-    Worker -->|embeddings| A
+    A -->|text| Provider
+    Provider -->|embeddings| A
 ```
-
-### Why ChromeWorker?
-
-Transformers.js can't run directly in Zotero's main thread because:
-- Missing browser globals (`self`, `navigator`, `indexedDB`)
-- Cache API crashes Zotero
-- Would block UI during model inference
-
-**Solution:** Run in a separate ChromeWorker thread with special configuration.
 
 ### Data Storage
 
@@ -375,7 +349,7 @@ Where:
 
 ```bash
 # Clone the repository
-git clone https://github.com/introfini/ZotSeek
+git clone https://github.com/BryceWG/ZotSeek-Online.git
 cd zotseek
 
 # Install dependencies (includes zotero-plugin-toolkit for stable progress windows)
@@ -620,23 +594,10 @@ Note: If WebGPU is unavailable or fails, the plugin automatically falls back to 
 
 ## Limitations
 
-- **English only** - Model is trained on English text
-- **Large plugin size** - ~131MB due to bundled AI model
-- **CPU only (for now)** - GPU acceleration ready but waiting for Zotero/Firefox WebGPU support
-- **Zotero 7 slower for Full Document mode** - Firefox 115 (Zotero 7) has slower WASM performance than Firefox 140 (Zotero 8). Full Document indexing is ~8-10x slower on Zotero 7. **Recommendation:** Use Abstract mode for faster indexing on Zotero 7, or upgrade to Zotero 8 for best performance.
-
----
-
-## Comparison with OpenAI
-
-| Feature | This Plugin (Local) | OpenAI API |
-|---------|--------------------| -----------|
-| **Cost** | Free | ~$0.02 per 1K papers |
-| **Privacy** | 100% local | Data sent to OpenAI |
-| **Offline** | Yes (after model loads) | No |
-| **Quality** | Excellent (outperforms text-embedding-3-small) | Good |
-| **Speed** | ~70-130ms | ~100ms |
-| **Context** | 8192 tokens | 8191 tokens |
+- **English-heavy tuning** - Retrieval quality depends on the provider/model you choose
+- **Requires network access** - Semantic indexing and semantic query embedding call the configured API
+- **Ongoing API cost** - Your provider may bill for embedding requests
+- **Model changes require rebuild** - If you switch provider/model, rebuild the index so stored vectors stay compatible
 
 ---
 
@@ -646,7 +607,6 @@ See the [docs/](docs/) folder for detailed documentation:
 
 - [**API.md**](docs/API.md) - Plugin API for integration with other Zotero plugins
 - [**SEARCH_ARCHITECTURE.md**](docs/SEARCH_ARCHITECTURE.md) - Hybrid search, RRF fusion, chunking strategy
-- [**DEVELOPMENT.md**](docs/DEVELOPMENT.md) - Development guide, ChromeWorker + Transformers.js implementation
 - [**ROADMAP.md**](docs/ROADMAP.md) - Planned features and improvements
 
 ---
@@ -663,11 +623,9 @@ MIT License - see [LICENSE](LICENSE)
 
 ## Acknowledgments
 
-- [Transformers.js](https://huggingface.co/docs/transformers.js) by Hugging Face
-- [sentence-transformers](https://www.sbert.net/) for the embedding model
 - [Zotero](https://www.zotero.org/) for the amazing reference manager
 - [windingwind's Zotero Plugin Docs](https://windingwind.github.io/doc-for-zotero-plugin-dev/) for invaluable guidance
 
 ---
 
-*ZotSeek: AI-Powered Semantic Search for Zotero — Built by José Fernandes*
+*ZotSeek Online: AI-Powered Semantic Search for Zotero — Built by BryceWG*

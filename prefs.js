@@ -6,16 +6,16 @@ pref("extensions.zotero.zotseek.minSimilarityPercent", 30);
 pref("extensions.zotero.zotseek.topK", 20);
 pref("extensions.zotero.zotseek.autoIndex", false);
 pref("extensions.zotero.zotseek.autoIndexDelay", 10);
+pref("extensions.zotero.zotseek.embeddingProvider", "voyage");
+pref("extensions.zotero.zotseek.embeddingModel", "voyage-3.5-lite");
+pref("extensions.zotero.zotseek.embeddingApiKey", "");
 
 // Indexing mode: "abstract" (title+abstract) or "full" (abstract + PDF sections)
 pref("extensions.zotero.zotseek.indexingMode", "abstract");
 
-// Chunking options for nomic-embed-text-v1.5 (8192 token context)
-// PERFORMANCE: Smaller chunks = faster embedding (~O(n²) attention cost)
-// - 7000 tokens: ~45 sec/chunk (too slow!)
-// - 800 tokens: ~0.3-0.5 sec/chunk (very fast!)
-// Paragraph-level chunking creates many small chunks for precise page location
-pref("extensions.zotero.zotseek.maxTokens", 800);
+// Chunking options for online embedding APIs
+// Smaller chunks improve retrieval quality and reduce per-request payload size
+pref("extensions.zotero.zotseek.maxTokens", 2000);
 pref("extensions.zotero.zotseek.maxChunksPerPaper", 100);
 
 // Item type filtering

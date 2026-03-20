@@ -39,7 +39,7 @@ export interface PaperEmbedding {
   abstract?: string;
   chunkText?: string;       // The actual text that was embedded (for debugging)
   textSource: TextSourceType;
-  embedding: number[];      // 768 dimensions (nomic-embed-text-v1.5)
+  embedding: number[];      // Dimensions depend on the configured embedding model
   modelId: string;
   indexedAt: string;
   contentHash: string;
@@ -1470,8 +1470,23 @@ export class VectorStoreSQLite {
       this.logger.error(`getStats(): Failed to get last indexed: ${e}`);
     }
 
-    // Estimate storage (based on chunk count)
-    const bytesPerEmbedding = 768 * 4 + 200;  // 768 floats (nomic-embed) + metadata
+    // Estimate storage based on the first stored embedding length
+    let embeddingDimensions = 1024;
+    try {
+      const sampleEmbedding = await Zotero.DB.valueQueryAsync(`
+        SELECT embedding FROM ${DB_NAME}.embeddings LIMIT 1
+      `);
+      if (sampleEmbedding) {
+        const parsed = JSON.parse(String(sampleEmbedding));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          embeddingDimensions = parsed.length;
+        }
+      }
+    } catch (e) {
+      this.logger.debug(`getStats(): Could not determine embedding dimensions: ${e}`);
+    }
+
+    const bytesPerEmbedding = embeddingDimensions * 4 + 200;
     const storageUsedBytes = chunkCount * bytesPerEmbedding;
     const avgChunksPerPaper = itemCount > 0 ? chunkCount / itemCount : 0;
 

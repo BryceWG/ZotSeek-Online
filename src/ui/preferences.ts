@@ -5,6 +5,16 @@
 
 import { getZotero } from '../utils/zotero-helper';
 import { autoIndexManager } from '../core/auto-index-manager';
+import {
+  DEFAULT_EMBEDDING_MODEL,
+  DEFAULT_EMBEDDING_PROVIDER,
+  EMBEDDING_MODEL_OPTIONS,
+  embeddingPipeline,
+  formatEmbeddingModelId,
+  getConfiguredEmbeddingModelId,
+  getConfiguredEmbeddingSettings,
+  hasConfiguredApiKey,
+} from '../core/embedding-pipeline';
 
 class PreferencesManager {
   private window: Window | null = null;
@@ -30,9 +40,6 @@ class PreferencesManager {
       // Initialize preferences
       this.initPreferences();
 
-      // Show Zotero 7 performance warning only on Zotero 7 (Firefox < 128)
-      this.initVersionWarning();
-
       // Set up event listeners
       this.initEventListeners();
 
@@ -42,25 +49,6 @@ class PreferencesManager {
       this.logger.info('Preference pane initialized successfully');
     } catch (error) {
       this.logger.error(`Failed to initialize preferences: ${error}`);
-    }
-  }
-
-  /**
-   * Show performance warning only on Zotero 7 (Firefox < 128)
-   */
-  private initVersionWarning(): void {
-    if (!this.window) return;
-    const doc = this.window.document;
-    const Z = getZotero();
-    if (!Z) return;
-
-    const perfWarning = doc.getElementById('zotseek-perf-warning');
-    if (perfWarning) {
-      // Show warning only on Firefox < 128 (Zotero 7)
-      const platformVersion = Z.platformMajorVersion || 0;
-      const isZotero7 = platformVersion > 0 && platformVersion < 128;
-      perfWarning.style.display = isZotero7 ? 'block' : 'none';
-      this.logger.debug(`Performance warning ${isZotero7 ? 'shown' : 'hidden'} (Firefox ${platformVersion})`);
     }
   }
 
@@ -84,18 +72,24 @@ class PreferencesManager {
       excludeTag: Z.Prefs.get('zotseek.excludeTag', true) || 'zotseek-exclude',
       autoIndex: Z.Prefs.get('zotseek.autoIndex', true) ?? false,
       autoIndexDelay: Z.Prefs.get('zotseek.autoIndexDelay', true) ?? 10,
+      embeddingProvider: Z.Prefs.get('zotseek.embeddingProvider', true) || DEFAULT_EMBEDDING_PROVIDER,
+      embeddingModel: Z.Prefs.get('zotseek.embeddingModel', true) || DEFAULT_EMBEDDING_MODEL,
+      embeddingApiKey: Z.Prefs.get('zotseek.embeddingApiKey', true) || '',
     };
 
     this.logger.debug(`Loaded preferences: ${JSON.stringify(prefs)}`);
 
     // Set menulist values
     this.setMenulistValue('zotseek-pref-indexingMode', prefs.indexingMode);
+    this.setMenulistValue('zotseek-pref-embeddingProvider', prefs.embeddingProvider);
+    this.setMenulistValue('zotseek-pref-embeddingModel', prefs.embeddingModel);
 
     // Set input values
     this.setInputValue('zotseek-pref-maxTokens', prefs.maxTokens);
     this.setInputValue('zotseek-pref-maxChunksPerPaper', prefs.maxChunksPerPaper);
     this.setInputValue('zotseek-pref-topK', prefs.topK);
     this.setInputValue('zotseek-pref-minSimilarity', prefs.minSimilarity);
+    this.setInputValue('zotseek-pref-embeddingApiKey', prefs.embeddingApiKey);
 
     // Set checkbox values
     this.setCheckboxValue('zotseek-pref-excludeBooks', prefs.excludeBooks);
@@ -111,6 +105,7 @@ class PreferencesManager {
 
     // Update mode cards to match current selection
     this.updateModeCards();
+    this.updateEmbeddingSettingsUI();
   }
 
   /**
@@ -176,6 +171,37 @@ class PreferencesManager {
     }
   }
 
+  private updateEmbeddingSettingsUI(): void {
+    if (!this.window) return;
+    const doc = this.window.document;
+    const Z = getZotero();
+    if (!Z) return;
+
+    const config = getConfiguredEmbeddingSettings(Z);
+    const currentModelLabel = formatEmbeddingModelId(getConfiguredEmbeddingModelId(Z));
+    const modelOption = EMBEDDING_MODEL_OPTIONS.find(option => option.id === config.modelId);
+
+    const summaryEl = doc.getElementById('zotseek-embedding-current-value');
+    if (summaryEl) {
+      summaryEl.textContent = currentModelLabel;
+    }
+
+    const helpEl = doc.getElementById('zotseek-embedding-model-help');
+    if (helpEl) {
+      helpEl.textContent = modelOption?.description || 'Online embeddings are used for indexing and query search.';
+    }
+
+    const endpointEl = doc.getElementById('zotseek-embedding-endpoint');
+    if (endpointEl) {
+      endpointEl.textContent = config.endpoint;
+    }
+
+    const apiWarning = doc.getElementById('zotseek-api-warning');
+    if (apiWarning) {
+      apiWarning.style.display = hasConfiguredApiKey(Z) ? 'none' : 'block';
+    }
+  }
+
   /**
    * Set up event listeners for UI elements
    */
@@ -196,6 +222,47 @@ class PreferencesManager {
           // Check for mismatch after changing
           this.loadStatsAndCheckMismatch();
         }
+      });
+    }
+
+    const embeddingProviderMenu = doc.getElementById('zotseek-pref-embeddingProvider') as any;
+    if (embeddingProviderMenu) {
+      embeddingProviderMenu.addEventListener('command', () => {
+        const value = embeddingProviderMenu.selectedItem?.value;
+        if (value) {
+          Z.Prefs.set('zotseek.embeddingProvider', value, true);
+          Z.Prefs.set('zotseek.embeddingModel', DEFAULT_EMBEDDING_MODEL, true);
+          this.setMenulistValue('zotseek-pref-embeddingModel', DEFAULT_EMBEDDING_MODEL);
+          embeddingPipeline.reset();
+          this.updateEmbeddingSettingsUI();
+          this.loadStatsAndCheckMismatch();
+          this.logger.info(`Embedding provider changed to: ${value}`);
+        }
+      });
+    }
+
+    const embeddingModelMenu = doc.getElementById('zotseek-pref-embeddingModel') as any;
+    if (embeddingModelMenu) {
+      embeddingModelMenu.addEventListener('command', () => {
+        const value = embeddingModelMenu.selectedItem?.value;
+        if (value) {
+          Z.Prefs.set('zotseek.embeddingModel', value, true);
+          embeddingPipeline.reset();
+          this.updateEmbeddingSettingsUI();
+          this.loadStatsAndCheckMismatch();
+          this.logger.info(`Embedding model changed to: ${value}`);
+        }
+      });
+    }
+
+    const embeddingApiKeyInput = doc.getElementById('zotseek-pref-embeddingApiKey') as HTMLInputElement;
+    if (embeddingApiKeyInput) {
+      embeddingApiKeyInput.addEventListener('change', () => {
+        const value = embeddingApiKeyInput.value.trim();
+        Z.Prefs.set('zotseek.embeddingApiKey', value, true);
+        embeddingPipeline.reset();
+        this.updateEmbeddingSettingsUI();
+        this.logger.info(`Embedding API key ${value ? 'updated' : 'cleared'}`);
       });
     }
 
@@ -296,6 +363,8 @@ class PreferencesManager {
     const Z = getZotero();
     if (!Z?.ZotSeek) return;
 
+    this.updateEmbeddingSettingsUI();
+
     const setText = (id: string, value: string) => {
       const el = doc.getElementById(id);
       if (el) el.textContent = value;
@@ -331,6 +400,7 @@ class PreferencesManager {
       const indexedModeLabel = doc.getElementById('zotseek-stat-indexedmode-label');
       const indexedModeValue = doc.getElementById('zotseek-stat-indexedmode');
       const warningBox = doc.getElementById('zotseek-indexmode-warning');
+      const modelWarningBox = doc.getElementById('zotseek-model-warning');
 
       if (stats.indexedWithMode) {
         setText('zotseek-stat-indexedmode', stats.indexedWithMode);
@@ -339,10 +409,10 @@ class PreferencesManager {
 
         // Check for mismatch
         const currentMode = Z.Prefs.get('zotseek.indexingMode', true) || 'abstract';
-        const currentModeLabel = {
+        const currentModeLabel = ({
           'abstract': 'Abstract Only',
           'full': 'Full Paper'
-        }[currentMode] || currentMode;
+        } as Record<string, string>)[currentMode] || currentMode;
 
         if (warningBox) {
           if (stats.indexedWithMode !== currentModeLabel && stats.indexedPapers > 0) {
@@ -362,6 +432,19 @@ class PreferencesManager {
         if (indexedModeLabel) indexedModeLabel.style.display = 'none';
         if (indexedModeValue) indexedModeValue.style.display = 'none';
         if (warningBox) warningBox.style.display = 'none';
+      }
+
+      const currentModelId = getConfiguredEmbeddingModelId(Z);
+      if (modelWarningBox) {
+        if (stats.rawModelId && stats.rawModelId !== 'none' && stats.rawModelId !== currentModelId && stats.indexedPapers > 0) {
+          modelWarningBox.style.display = 'block';
+          const indexedModelEl = doc.getElementById('zotseek-warning-indexed-model');
+          const currentModelEl = doc.getElementById('zotseek-warning-current-model');
+          if (indexedModelEl) indexedModelEl.textContent = formatEmbeddingModelId(stats.rawModelId);
+          if (currentModelEl) currentModelEl.textContent = formatEmbeddingModelId(currentModelId);
+        } else {
+          modelWarningBox.style.display = 'none';
+        }
       }
 
       this.logger.debug('Stats loaded successfully');

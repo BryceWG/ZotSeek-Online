@@ -1,10 +1,10 @@
 {
   "manifest_version": 2,
-  "name": "ZotSeek | AI-Powered Semantic Search",
-  "version": "1.10.0",
-  "description": "AI-powered semantic search for your Zotero library. Find similar papers by meaning, not just keywords.",
-  "author": "José Fernandes",
-  "homepage_url": "https://github.com/introfini/zotseek",
+  "name": "ZotSeek Online | AI-Powered Semantic Search",
+  "version": "1.0.0",
+  "description": "AI-powered semantic search for your Zotero library using online embedding APIs.",
+  "author": "BryceWG",
+  "homepage_url": "https://github.com/BryceWG/ZotSeek-Online",
   "icons": {
     "48": "content/icons/favicon@0.5x.png",
     "96": "content/icons/favicon.png"
@@ -12,7 +12,7 @@
   "applications": {
     "zotero": {
       "id": "zotseek@zotero.org",
-      "update_url": "https://raw.githubusercontent.com/introfini/zotseek/main/update.json",
+      "update_url": "https://raw.githubusercontent.com/BryceWG/ZotSeek-Online/main/update.json",
       "strict_min_version": "6.999",
       "strict_max_version": "8.*"
     }

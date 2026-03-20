@@ -377,18 +377,18 @@ This helps users understand which queries matched strongly and which were weaker
 │  │ "Machine learning for   │         │ [0.023, -0.045,     │        │
 │  │  medical diagnosis      │   →     │  0.012, 0.089,      │        │
 │  │  using deep neural      │         │  -0.034, 0.056,     │        │
-│  │  networks..."           │         │  ... 768 values]    │        │
+│  │  networks..."           │         │  ... vector values] │        │
 │  └─────────────────────────┘         └─────────────────────┘        │
 │                                                                      │
-│  MODEL: nomic-embed-text-v1.5                                       │
-│  ├── Context: 8192 tokens                                           │
-│  ├── Dimensions: 768                                                │
-│  ├── Size: 131MB (quantized)                                        │
-│  └── Quality: Outperforms OpenAI text-embedding-3-small             │
+│  MODEL: Configured online embedding provider/model                  │
+│  ├── Provider chosen in Settings                                    │
+│  ├── Dimensions vary by model                                       │
+│  ├── No bundled local model files                                   │
+│  └── Rebuild index after model changes                              │
 │                                                                      │
-│  INSTRUCTION PREFIXES (improve retrieval quality):                   │
-│  ├── Documents: "search_document: <text>"                           │
-│  └── Queries:   "search_query: <text>"                              │
+│  INPUT TYPES (provider-side retrieval tuning):                      │
+│  ├── Documents: input_type = "document"                            │
+│  └── Queries:   input_type = "query"                               │
 │                                                                      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -879,4 +879,3 @@ ZotSeek combines:
 5. **Performance** - Optimized chunking and caching for fast searches
 
 This hybrid approach gives you the best of both worlds: finding conceptually related papers while still being able to search for specific authors, years, and technical terms.
-

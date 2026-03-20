@@ -1,13 +1,9 @@
 /**
- * Embedding Pipeline - Generate embeddings for semantic search
- *
- * Uses ChromeWorker + Transformers.js for high quality neural embeddings.
+ * Embedding Pipeline - Generate embeddings via online providers
  */
 
 import { Logger } from '../utils/logger';
-
-declare const Zotero: any;
-declare const ChromeWorker: any;
+import { getZotero } from '../utils/zotero-helper';
 
 export interface EmbeddingResult {
   embedding: number[];
@@ -24,25 +20,165 @@ export interface EmbeddingProgress {
 
 export type ProgressCallback = (progress: EmbeddingProgress) => void;
 
-// Embedding configuration - nomic-embed-text-v1.5
-// 8192 token context, 768 dimensions, Matryoshka-enabled
-// Uses instruction prefixes: search_document: and search_query:
-// See: https://huggingface.co/nomic-ai/nomic-embed-text-v1.5
-// Note: Model files from nomic-ai stored in Xenova directory structure for Transformers.js
-export const EMBEDDING_CONFIG = {
-  dimensions: 768,  // nomic-embed-v1.5 outputs 768 dimensions
-  transformersModelId: 'Xenova/nomic-embed-text-v1.5',
-  maxTokens: 8192,  // 8K context window
-};
+export type EmbeddingProviderId = 'voyage';
+
+export interface EmbeddingModelOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+interface EmbeddingProviderOption {
+  id: EmbeddingProviderId;
+  label: string;
+  endpoint: string;
+}
+
+interface EmbeddingRuntimeConfig {
+  providerId: EmbeddingProviderId;
+  providerLabel: string;
+  modelId: string;
+  apiKey: string;
+  endpoint: string;
+}
+
+const EMBEDDING_PROVIDER_OPTIONS: readonly EmbeddingProviderOption[] = [
+  {
+    id: 'voyage',
+    label: 'Voyage AI',
+    endpoint: 'https://api.voyageai.com/v1/embeddings',
+  },
+];
+
+export const EMBEDDING_MODEL_OPTIONS: readonly EmbeddingModelOption[] = [
+  {
+    id: 'voyage-3.5-lite',
+    label: 'voyage-3.5-lite',
+    description: 'Fast and cost-efficient general-purpose retrieval model.',
+  },
+  {
+    id: 'voyage-3.5',
+    label: 'voyage-3.5',
+    description: 'Balanced quality and latency for general semantic search.',
+  },
+  {
+    id: 'voyage-3-large',
+    label: 'voyage-3-large',
+    description: 'Higher quality retrieval model for broad document search.',
+  },
+  {
+    id: 'voyage-4-lite',
+    label: 'voyage-4-lite',
+    description: 'Lightweight Voyage 4 model with flexible output dimensions.',
+  },
+  {
+    id: 'voyage-4',
+    label: 'voyage-4',
+    description: 'Strong general-purpose retrieval model in the Voyage 4 family.',
+  },
+  {
+    id: 'voyage-4-large',
+    label: 'voyage-4-large',
+    description: 'Highest-quality Voyage 4 retrieval model.',
+  },
+  {
+    id: 'voyage-code-3',
+    label: 'voyage-code-3',
+    description: 'Specialized model for code search and technical snippets.',
+  },
+  {
+    id: 'voyage-finance-2',
+    label: 'voyage-finance-2',
+    description: 'Domain-tuned model for finance documents and terminology.',
+  },
+  {
+    id: 'voyage-law-2',
+    label: 'voyage-law-2',
+    description: 'Domain-tuned model for legal research and case text.',
+  },
+];
+
+export const DEFAULT_EMBEDDING_PROVIDER: EmbeddingProviderId = 'voyage';
+export const DEFAULT_EMBEDDING_MODEL = 'voyage-3.5-lite';
+
+const MAX_REQUEST_INPUTS = 8;
+const MAX_REQUEST_CHARS = 40000;
+
+function normalizeProviderId(value: unknown): EmbeddingProviderId {
+  return value === 'voyage' ? value : DEFAULT_EMBEDDING_PROVIDER;
+}
+
+function getProviderOption(providerId: EmbeddingProviderId): EmbeddingProviderOption {
+  return EMBEDDING_PROVIDER_OPTIONS.find(option => option.id === providerId) || EMBEDDING_PROVIDER_OPTIONS[0];
+}
+
+function isKnownModel(modelId: string): boolean {
+  return EMBEDDING_MODEL_OPTIONS.some(option => option.id === modelId);
+}
+
+export function getEmbeddingProviderOptions(): readonly { id: EmbeddingProviderId; label: string }[] {
+  return EMBEDDING_PROVIDER_OPTIONS.map(({ id, label }) => ({ id, label }));
+}
+
+export function getEmbeddingModelOptions(_providerId: string = DEFAULT_EMBEDDING_PROVIDER): readonly EmbeddingModelOption[] {
+  return EMBEDDING_MODEL_OPTIONS;
+}
+
+export function getEmbeddingProviderLabel(providerId: string): string {
+  const normalized = normalizeProviderId(providerId);
+  return getProviderOption(normalized).label;
+}
+
+export function getConfiguredEmbeddingSettings(Z = getZotero()): EmbeddingRuntimeConfig {
+  const providerId = normalizeProviderId(Z?.Prefs?.get('zotseek.embeddingProvider', true));
+  const provider = getProviderOption(providerId);
+  const requestedModel = String(Z?.Prefs?.get('zotseek.embeddingModel', true) || '').trim();
+  const modelId = isKnownModel(requestedModel) ? requestedModel : DEFAULT_EMBEDDING_MODEL;
+  const apiKey = String(Z?.Prefs?.get('zotseek.embeddingApiKey', true) || '').trim();
+
+  return {
+    providerId,
+    providerLabel: provider.label,
+    modelId,
+    apiKey,
+    endpoint: provider.endpoint,
+  };
+}
+
+export function getConfiguredEmbeddingModelId(Z = getZotero()): string {
+  const config = getConfiguredEmbeddingSettings(Z);
+  return `${config.providerId}:${config.modelId}`;
+}
+
+export function hasConfiguredApiKey(Z = getZotero()): boolean {
+  return Boolean(getConfiguredEmbeddingSettings(Z).apiKey);
+}
+
+export function formatEmbeddingModelId(modelId: string): string {
+  if (!modelId || modelId === 'none') {
+    return 'None';
+  }
+
+  const separatorIndex = modelId.indexOf(':');
+  if (separatorIndex > 0) {
+    const providerId = modelId.slice(0, separatorIndex);
+    const providerLabel = getEmbeddingProviderLabel(providerId);
+    const providerModelId = modelId.slice(separatorIndex + 1);
+    return `${providerLabel} / ${providerModelId}`;
+  }
+
+  if (isKnownModel(modelId)) {
+    return `${getEmbeddingProviderLabel(DEFAULT_EMBEDDING_PROVIDER)} / ${modelId}`;
+  }
+
+  return modelId;
+}
 
 /**
- * Embedding Pipeline with ChromeWorker support
+ * Embedding Pipeline backed by online embedding APIs
  */
 export class EmbeddingPipeline {
   private logger: Logger;
-  private worker: any = null;
-  private workerReady = false;
-  private pendingJobs = new Map<string, { resolve: Function; reject: Function }>();
   private ready = false;
 
   constructor() {
@@ -50,163 +186,189 @@ export class EmbeddingPipeline {
   }
 
   /**
-   * Initialize the embedding pipeline
+   * Validate configuration and mark the pipeline ready
    */
   async init(): Promise<void> {
     if (this.ready) return;
 
-    this.logger.info('Initializing embedding pipeline with Transformers.js');
-    await this.initWorker();  // Will throw on failure
-    this.logger.info('Using Transformers.js via ChromeWorker');
-
+    const config = this.getValidatedConfig();
+    this.logger.info(`Embedding provider ready: ${config.providerLabel} (${config.modelId})`);
     this.ready = true;
   }
 
-  /**
-   * Initialize ChromeWorker for Transformers.js
-   */
-  private async initWorker(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        // Get worker script path
-        const workerPath = 'chrome://zotseek/content/scripts/embedding-worker.js';
+  private getValidatedConfig(): EmbeddingRuntimeConfig {
+    const config = getConfiguredEmbeddingSettings();
 
-        this.logger.info(`Creating ChromeWorker: ${workerPath}`);
-        this.worker = new ChromeWorker(workerPath);
+    if (!config.apiKey) {
+      throw new Error(
+        `${config.providerLabel} API key is missing. Open Zotero Settings -> ZotSeek and add your API key.`
+      );
+    }
 
-        const timeout = setTimeout(() => {
-          reject(new Error('Worker initialization timeout'));
-        }, 30000);
-
-        this.worker.onmessage = (event: any) => {
-          const { type, status, jobId, error, embedding, modelId, processingTimeMs, message, level, data } = event.data;
-
-          if (type === 'log') {
-            // Handle log messages from worker
-            const logMessage = data ? `${message} - ${JSON.stringify(data)}` : message;
-            switch(level) {
-              case 'error':
-                this.logger.error(logMessage);
-                break;
-              case 'warn':
-                this.logger.warn(logMessage);
-                break;
-              case 'info':
-              default:
-                this.logger.info(logMessage);
-                break;
-            }
-          } else if (type === 'status') {
-            // Only log important status updates, suppress repetitive loading progress
-            if (status !== 'loading' || !message?.includes('Loading model:')) {
-              this.logger.info(`Worker status: ${status} - ${message}`);
-            }
-            if (status === 'ready') {
-              clearTimeout(timeout);
-              this.workerReady = true;
-              resolve();
-            }
-          } else if (type === 'error') {
-            this.logger.error(`Worker error: ${error}`);
-            if (jobId && this.pendingJobs.has(jobId)) {
-              const job = this.pendingJobs.get(jobId)!;
-              this.pendingJobs.delete(jobId);
-              job.reject(new Error(error));
-            } else {
-              clearTimeout(timeout);
-              reject(new Error(error));
-            }
-          } else if (type === 'embedding' && jobId) {
-            const job = this.pendingJobs.get(jobId);
-            if (job) {
-              this.pendingJobs.delete(jobId);
-              job.resolve({ embedding, modelId, processingTimeMs });
-            }
-          }
-        };
-
-        this.worker.onerror = (event: any) => {
-          // Extract detailed error info from ErrorEvent
-          const errorInfo = {
-            message: event.message || 'Unknown error',
-            filename: event.filename || 'unknown',
-            lineno: event.lineno || 0,
-            colno: event.colno || 0,
-            error: event.error?.toString() || event.error?.message || 'No error details',
-          };
-          this.logger.error(`Worker error: ${errorInfo.message} at ${errorInfo.filename}:${errorInfo.lineno}:${errorInfo.colno}`);
-          this.logger.error(`Error details: ${errorInfo.error}`);
-          clearTimeout(timeout);
-          reject(new Error(`Worker failed: ${errorInfo.message}`));
-        };
-
-        // Initialize the worker with Zotero version info
-        // ChromeWorker doesn't have access to full userAgent, so pass version from main thread
-        // Zotero.platformMajorVersion = Firefox version (102 for Zotero 7, 128+ for Zotero 8)
-        const zoteroMajorVersion = typeof Zotero !== 'undefined' ? parseInt(Zotero.version?.split('.')[0], 10) || 0 : 0;
-        const platformMajorVersion = typeof Zotero !== 'undefined' ? Zotero.platformMajorVersion || 0 : 0;
-        this.logger.info(`Zotero version: ${zoteroMajorVersion}, Platform (Firefox): ${platformMajorVersion}`);
-        this.worker.postMessage({
-          type: 'init',
-          data: { zoteroMajorVersion, platformMajorVersion }
-        });
-
-      } catch (error) {
-        this.logger.error('Failed to create ChromeWorker:', error);
-        reject(error);
-      }
-    });
+    return config;
   }
 
-  /**
-   * Generate embedding for text using worker
-   * @param text - Text to embed
-   * @param isQuery - If true, embed as search query; if false, embed as document
-   */
-  private async embedWithWorker(text: string, isQuery: boolean = false): Promise<EmbeddingResult> {
-    return new Promise((resolve, reject) => {
-      const jobId = Math.random().toString(36).substring(2, 15);
+  private buildRequestBatches<T extends { text: string }>(items: T[]): T[][] {
+    const batches: T[][] = [];
+    let currentBatch: T[] = [];
+    let currentChars = 0;
 
-      this.pendingJobs.set(jobId, { resolve, reject });
+    for (const item of items) {
+      const itemChars = item.text.length;
+      const wouldExceedLimit =
+        currentBatch.length >= MAX_REQUEST_INPUTS ||
+        (currentBatch.length > 0 && currentChars + itemChars > MAX_REQUEST_CHARS);
 
-      this.worker.postMessage({
-        type: 'embed',
-        jobId,
-        data: { text, isQuery },
+      if (wouldExceedLimit) {
+        batches.push(currentBatch);
+        currentBatch = [];
+        currentChars = 0;
+      }
+
+      currentBatch.push(item);
+      currentChars += itemChars;
+    }
+
+    if (currentBatch.length > 0) {
+      batches.push(currentBatch);
+    }
+
+    return batches;
+  }
+
+  private parseResponseJson(response: any): any {
+    const raw = response?.responseText ?? response?.response;
+
+    if (typeof raw === 'string') {
+      return JSON.parse(raw);
+    }
+
+    if (raw && typeof raw === 'object') {
+      return raw;
+    }
+
+    throw new Error('Empty response from embedding provider');
+  }
+
+  private extractErrorBody(error: any): any {
+    const raw =
+      error?.responseText ??
+      error?.response?.responseText ??
+      error?.xmlhttp?.responseText ??
+      error?.xhr?.responseText ??
+      error?.response?.response;
+
+    if (!raw) {
+      return null;
+    }
+
+    if (typeof raw === 'string') {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return raw;
+      }
+    }
+
+    return raw;
+  }
+
+  private formatProviderError(config: EmbeddingRuntimeConfig, error: any): string {
+    const status = error?.status || error?.response?.status || error?.xmlhttp?.status || error?.xhr?.status;
+    const errorBody = this.extractErrorBody(error);
+
+    let detail = '';
+    if (typeof errorBody === 'string') {
+      detail = errorBody;
+    } else if (errorBody && typeof errorBody === 'object') {
+      detail = String(errorBody.detail || errorBody.error || errorBody.message || '').trim();
+    }
+
+    if (status === 401) {
+      return `${config.providerLabel} rejected the API key (401 Unauthorized).`;
+    }
+
+    if (status === 429) {
+      return `${config.providerLabel} rate limit reached (429). Please try again shortly.`;
+    }
+
+    if (detail) {
+      return `${config.providerLabel} request failed${status ? ` (${status})` : ''}: ${detail}`;
+    }
+
+    const message = error?.message ? String(error.message) : 'Unknown request error';
+    return `${config.providerLabel} request failed${status ? ` (${status})` : ''}: ${message}`;
+  }
+
+  private async requestEmbeddings(inputs: string[], inputType: 'query' | 'document'): Promise<EmbeddingResult[]> {
+    const config = this.getValidatedConfig();
+    const Z = getZotero();
+
+    if (!Z?.HTTP?.request) {
+      throw new Error('Zotero HTTP API is not available in this context.');
+    }
+
+    const payload = {
+      input: inputs,
+      model: config.modelId,
+      input_type: inputType,
+      truncation: true,
+    };
+
+    const startedAt = Date.now();
+
+    try {
+      const response = await Z.HTTP.request('POST', config.endpoint, {
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        timeout: 60000,
       });
 
-      // Timeout for individual embedding
-      // With smaller chunks (~2000 tokens), embeddings should take ~3-10 seconds
-      // First embedding may be slower due to WASM compilation
-      setTimeout(() => {
-        if (this.pendingJobs.has(jobId)) {
-          this.pendingJobs.delete(jobId);
-          reject(new Error('Embedding timeout'));
+      const responseJson = this.parseResponseJson(response);
+      const data = Array.isArray(responseJson?.data) ? responseJson.data : null;
+      if (!data || data.length !== inputs.length) {
+        throw new Error('Unexpected embedding response shape');
+      }
+
+      const returnedModel = typeof responseJson.model === 'string' && responseJson.model
+        ? responseJson.model
+        : config.modelId;
+      const processingTimeMs = Date.now() - startedAt;
+
+      return data.map((item: any) => {
+        const rawEmbedding = item?.embedding;
+        if (!Array.isArray(rawEmbedding)) {
+          throw new Error('Embedding vector missing from response');
         }
-      }, 60000); // 60 seconds - enough for first-run WASM compilation
-    });
+
+        return {
+          embedding: rawEmbedding.map((value: unknown) => Number(value)),
+          modelId: `${config.providerId}:${returnedModel}`,
+          processingTimeMs,
+        };
+      });
+    } catch (error: any) {
+      throw new Error(this.formatProviderError(config, error));
+    }
   }
 
   /**
    * Generate embedding for a single text
-   * @param text - Text to embed
-   * @param isQuery - If true, embed as search query; if false, embed as document
    */
   async embed(text: string, isQuery: boolean = false): Promise<EmbeddingResult> {
     if (!this.ready) {
       await this.init();
     }
 
-    if (!this.workerReady) {
-      throw new Error('Embedding worker not ready. Please ensure Transformers.js is initialized.');
-    }
-
-    return this.embedWithWorker(text, isQuery);
+    const [result] = await this.requestEmbeddings([text], isQuery ? 'query' : 'document');
+    return result;
   }
 
   /**
    * Convenience method for embedding search queries
-   * Uses the search_query: prefix for better retrieval
    */
   async embedQuery(query: string): Promise<EmbeddingResult> {
     return this.embed(query, true);
@@ -214,50 +376,69 @@ export class EmbeddingPipeline {
 
   /**
    * Convenience method for embedding documents
-   * Uses the search_document: prefix for better retrieval
    */
   async embedDocument(text: string): Promise<EmbeddingResult> {
     return this.embed(text, false);
   }
 
   /**
-   * Generate embeddings for multiple texts with progress callback
-   * Always embeds as documents (isQuery=false) since this is for indexing
+   * Generate embeddings for multiple texts with batched API requests
    */
   async embedBatch(
-    texts: { id: number; text: string; title: string }[],
+    texts: { id: string; text: string; title: string }[],
     onProgress?: ProgressCallback
-  ): Promise<Map<number, EmbeddingResult>> {
+  ): Promise<Map<string, EmbeddingResult>> {
     if (!this.ready) {
       await this.init();
     }
 
-    const results = new Map<number, EmbeddingResult>();
+    const results = new Map<string, EmbeddingResult>();
     const total = texts.length;
+    let processed = 0;
 
-    for (let i = 0; i < texts.length; i++) {
-      const { id, text, title } = texts[i];
-
-      if (onProgress) {
-        onProgress({
-          current: i + 1,
-          total,
-          currentTitle: title,
-          status: 'processing',
-        });
-      }
-
+    const batches = this.buildRequestBatches(texts);
+    for (const batch of batches) {
       try {
-        // Always use embedDocument for batch indexing
-        const result = await this.embedDocument(text);
-        results.set(id, result);
-      } catch (error) {
-        this.logger.error(`Failed to embed item ${id}:`, error);
-      }
+        const batchResults = await this.requestEmbeddings(
+          batch.map(item => item.text),
+          'document'
+        );
 
-      // Yield to UI thread periodically
-      if (i % 10 === 0) {
-        await new Promise(resolve => setTimeout(resolve, 0));
+        batch.forEach((item, index) => {
+          results.set(item.id, batchResults[index]);
+          processed++;
+
+          if (onProgress) {
+            onProgress({
+              current: processed,
+              total,
+              currentTitle: item.title,
+              status: 'processing',
+            });
+          }
+        });
+      } catch (batchError: any) {
+        this.logger.warn(`Batch embedding failed, retrying per item: ${batchError?.message || batchError}`);
+
+        for (const item of batch) {
+          try {
+            const [result] = await this.requestEmbeddings([item.text], 'document');
+            results.set(item.id, result);
+          } catch (itemError: any) {
+            this.logger.error(`Failed to embed item "${item.title}": ${itemError?.message || itemError}`);
+          } finally {
+            processed++;
+
+            if (onProgress) {
+              onProgress({
+                current: processed,
+                total,
+                currentTitle: item.title,
+                status: 'processing',
+              });
+            }
+          }
+        }
       }
     }
 
@@ -281,46 +462,38 @@ export class EmbeddingPipeline {
   }
 
   /**
-   * Reset pipeline to force re-initialization with new settings
+   * Reset pipeline to force re-validation after settings changes
    */
   reset(): void {
     this.logger.info('Resetting embedding pipeline');
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
-    this.workerReady = false;
     this.ready = false;
-    this.pendingJobs.clear();
   }
 
   /**
-   * Get current model ID
+   * Get current provider/model identifier
    */
   getModelId(): string {
-    return EMBEDDING_CONFIG.transformersModelId;
+    return getConfiguredEmbeddingModelId();
   }
 
   /**
    * Get model info
    */
   getModelInfo(): { id: string; dimensions: number; description: string } {
+    const config = getConfiguredEmbeddingSettings();
+
     return {
       id: this.getModelId(),
-      dimensions: EMBEDDING_CONFIG.dimensions,
-      description: 'Transformers.js nomic-embed-v1.5 (768 dims, 8192 tokens, instruction-aware)',
+      dimensions: 1024,
+      description: `${config.providerLabel} embeddings API (${config.modelId})`,
     };
   }
 
   /**
-   * Cleanup worker
+   * Cleanup pipeline state
    */
   destroy(): void {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
-    this.pendingJobs.clear();
+    this.reset();
   }
 }
 
