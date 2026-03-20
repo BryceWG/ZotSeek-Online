@@ -1,0 +1,165 @@
+name: Release On Version Bump
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - package.json
+      - manifest.json
+      - update.json
+      - scripts/build.js
+      - scripts/release.js
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect-version:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read package version
+        id: version
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Detect version bump
+        id: check
+        env:
+          CURRENT_VERSION: ${{ steps.version.outputs.version }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          version_changed=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version_changed=true
+          elif [ -n "$EVENT_BEFORE" ] && [ "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            previous_version="$(git show "$EVENT_BEFORE:package.json" 2>/dev/null | node -e "let s=''; process.stdin.on('data', d => s += d); process.stdin.on('end', () => process.stdout.write(JSON.parse(s).version));" || true)"
+            if [ "$CURRENT_VERSION" != "$previous_version" ]; then
+              version_changed=true
+            fi
+          else
+            version_changed=true
+          fi
+
+          tag_exists=false
+          if git rev-parse "refs/tags/v$CURRENT_VERSION" >/dev/null 2>&1; then
+            tag_exists=true
+          fi
+
+          should_release=false
+          if [ "$version_changed" = "true" ] && [ "$tag_exists" = "false" ]; then
+            should_release=true
+          fi
+
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+          echo "version_changed=$version_changed"
+          echo "tag_exists=$tag_exists"
+
+  release:
+    needs: detect-version
+    if: needs.detect-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.detect-version.outputs.version }}
+      XPI_NAME: zotseek-online-${{ needs.detect-version.outputs.version }}.xpi
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync manifest and update metadata
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const manifest = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+          const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+          const addonId = manifest.applications?.zotero?.id || 'zotseek@zotero.org';
+          const strictMinVersion = manifest.applications?.zotero?.strict_min_version || '6.999';
+
+          manifest.version = pkg.version;
+          fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+
+          const updateJson = {
+            addons: {
+              [addonId]: {
+                updates: [
+                  {
+                    version: pkg.version,
+                    update_link: `https://github.com/${owner}/${repo}/releases/download/v${pkg.version}/zotseek-online-${pkg.version}.xpi`,
+                    applications: {
+                      zotero: {
+                        strict_min_version: strictMinVersion,
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          };
+
+          fs.writeFileSync('update.json', JSON.stringify(updateJson, null, 2) + '\n');
+          EOF
+
+      - name: Commit synced metadata
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- manifest.json update.json; then
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json update.json
+          git commit -m "chore: sync release metadata for v$VERSION [skip ci]"
+          git push origin "HEAD:$BRANCH_NAME"
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Package XPI
+        run: |
+          cd build
+          zip -r "../$XPI_NAME" .
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
+          target_commitish: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            ${{ env.XPI_NAME }}
+            update.json
