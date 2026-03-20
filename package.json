@@ -1,6 +1,6 @@
 {
   "name": "zotseek-online",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "ZotSeek Online - Semantic search for Zotero using online embedding APIs",
   "author": "BryceWG",
   "license": "MIT",

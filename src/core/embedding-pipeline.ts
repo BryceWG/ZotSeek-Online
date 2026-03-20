@@ -103,6 +103,9 @@ export const DEFAULT_EMBEDDING_MODEL = 'voyage-3.5-lite';
 
 const MAX_REQUEST_INPUTS = 8;
 const MAX_REQUEST_CHARS = 40000;
+const MAX_CONCURRENT_BATCH_REQUESTS = 3;
+const RATE_LIMIT_RETRY_ATTEMPTS = 2;
+const RATE_LIMIT_RETRY_DELAY_MS = 1500;
 
 function normalizeProviderId(value: unknown): EmbeddingProviderId {
   return value === 'voyage' ? value : DEFAULT_EMBEDDING_PROVIDER;
@@ -274,7 +277,7 @@ export class EmbeddingPipeline {
   }
 
   private formatProviderError(config: EmbeddingRuntimeConfig, error: any): string {
-    const status = error?.status || error?.response?.status || error?.xmlhttp?.status || error?.xhr?.status;
+    const status = this.getErrorStatus(error);
     const errorBody = this.extractErrorBody(error);
 
     let detail = '';
@@ -298,6 +301,130 @@ export class EmbeddingPipeline {
 
     const message = error?.message ? String(error.message) : 'Unknown request error';
     return `${config.providerLabel} request failed${status ? ` (${status})` : ''}: ${message}`;
+  }
+
+  private getErrorStatus(error: any): number | null {
+    const status = error?.status || error?.response?.status || error?.xmlhttp?.status || error?.xhr?.status;
+    return typeof status === 'number' ? status : null;
+  }
+
+  private isRateLimitError(error: any): boolean {
+    if (this.getErrorStatus(error) === 429) {
+      return true;
+    }
+
+    const message = error?.message ? String(error.message) : '';
+    return /rate limit|\b429\b/i.test(message);
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private async requestEmbeddingsWithRetry(
+    inputs: string[],
+    inputType: 'query' | 'document'
+  ): Promise<EmbeddingResult[]> {
+    let attempt = 0;
+
+    while (true) {
+      try {
+        return await this.requestEmbeddings(inputs, inputType);
+      } catch (error: any) {
+        if (!this.isRateLimitError(error) || attempt >= RATE_LIMIT_RETRY_ATTEMPTS) {
+          throw error;
+        }
+
+        const delayMs = RATE_LIMIT_RETRY_DELAY_MS * Math.pow(2, attempt);
+        this.logger.warn(
+          `Embedding request rate limited, retrying in ${delayMs}ms (attempt ${attempt + 1}/${RATE_LIMIT_RETRY_ATTEMPTS})`
+        );
+        await this.delay(delayMs);
+        attempt++;
+      }
+    }
+  }
+
+  private async runWithConcurrency<T>(
+    tasks: Array<() => Promise<T>>,
+    concurrency: number
+  ): Promise<T[]> {
+    if (tasks.length === 0) {
+      return [];
+    }
+
+    const results = new Array<T>(tasks.length);
+    let nextIndex = 0;
+    const workerCount = Math.max(1, Math.min(concurrency, tasks.length));
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (true) {
+          const index = nextIndex++;
+          if (index >= tasks.length) {
+            return;
+          }
+
+          results[index] = await tasks[index]();
+        }
+      })
+    );
+
+    return results;
+  }
+
+  private reportBatchProgress(
+    batch: { title: string }[],
+    total: number,
+    progressState: { processed: number },
+    onProgress?: ProgressCallback
+  ): void {
+    for (const item of batch) {
+      progressState.processed++;
+
+      if (onProgress) {
+        onProgress({
+          current: progressState.processed,
+          total,
+          currentTitle: item.title,
+          status: 'processing',
+        });
+      }
+    }
+  }
+
+  private async processBatch(
+    batch: { id: string; text: string; title: string }[],
+    total: number,
+    results: Map<string, EmbeddingResult>,
+    progressState: { processed: number },
+    onProgress?: ProgressCallback
+  ): Promise<void> {
+    try {
+      const batchResults = await this.requestEmbeddingsWithRetry(
+        batch.map(item => item.text),
+        'document'
+      );
+
+      batch.forEach((item, index) => {
+        results.set(item.id, batchResults[index]);
+      });
+
+      this.reportBatchProgress(batch, total, progressState, onProgress);
+    } catch (batchError: any) {
+      this.logger.warn(`Batch embedding failed, retrying per item: ${batchError?.message || batchError}`);
+
+      for (const item of batch) {
+        try {
+          const [result] = await this.requestEmbeddingsWithRetry([item.text], 'document');
+          results.set(item.id, result);
+        } catch (itemError: any) {
+          this.logger.error(`Failed to embed item "${item.title}": ${itemError?.message || itemError}`);
+        } finally {
+          this.reportBatchProgress([item], total, progressState, onProgress);
+        }
+      }
+    }
   }
 
   private async requestEmbeddings(inputs: string[], inputType: 'query' | 'document'): Promise<EmbeddingResult[]> {
@@ -351,7 +478,12 @@ export class EmbeddingPipeline {
         };
       });
     } catch (error: any) {
-      throw new Error(this.formatProviderError(config, error));
+      const wrappedError: any = new Error(this.formatProviderError(config, error));
+      const status = this.getErrorStatus(error);
+      if (status !== null) {
+        wrappedError.status = status;
+      }
+      throw wrappedError;
     }
   }
 
@@ -363,7 +495,7 @@ export class EmbeddingPipeline {
       await this.init();
     }
 
-    const [result] = await this.requestEmbeddings([text], isQuery ? 'query' : 'document');
+    const [result] = await this.requestEmbeddingsWithRetry([text], isQuery ? 'query' : 'document');
     return result;
   }
 
@@ -394,53 +526,21 @@ export class EmbeddingPipeline {
 
     const results = new Map<string, EmbeddingResult>();
     const total = texts.length;
-    let processed = 0;
+    const progressState = { processed: 0 };
 
     const batches = this.buildRequestBatches(texts);
-    for (const batch of batches) {
-      try {
-        const batchResults = await this.requestEmbeddings(
-          batch.map(item => item.text),
-          'document'
-        );
+    const concurrency = Math.max(1, Math.min(MAX_CONCURRENT_BATCH_REQUESTS, batches.length));
 
-        batch.forEach((item, index) => {
-          results.set(item.id, batchResults[index]);
-          processed++;
+    this.logger.info(
+      `Embedding ${total} texts in ${batches.length} request batches (concurrency ${concurrency})`
+    );
 
-          if (onProgress) {
-            onProgress({
-              current: processed,
-              total,
-              currentTitle: item.title,
-              status: 'processing',
-            });
-          }
-        });
-      } catch (batchError: any) {
-        this.logger.warn(`Batch embedding failed, retrying per item: ${batchError?.message || batchError}`);
-
-        for (const item of batch) {
-          try {
-            const [result] = await this.requestEmbeddings([item.text], 'document');
-            results.set(item.id, result);
-          } catch (itemError: any) {
-            this.logger.error(`Failed to embed item "${item.title}": ${itemError?.message || itemError}`);
-          } finally {
-            processed++;
-
-            if (onProgress) {
-              onProgress({
-                current: processed,
-                total,
-                currentTitle: item.title,
-                status: 'processing',
-              });
-            }
-          }
-        }
-      }
-    }
+    await this.runWithConcurrency(
+      batches.map(batch => async () => {
+        await this.processBatch(batch, total, results, progressState, onProgress);
+      }),
+      concurrency
+    );
 
     if (onProgress) {
       onProgress({

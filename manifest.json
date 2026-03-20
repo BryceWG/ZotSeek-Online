@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "ZotSeek Online | AI-Powered Semantic Search",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-powered semantic search for your Zotero library using online embedding APIs.",
   "author": "BryceWG",
   "homepage_url": "https://github.com/BryceWG/ZotSeek-Online",
